@@ -10,12 +10,14 @@
  *   - planda_search_therapists : Free-text search
  *
  * Transport:
- *   - Set TRANSPORT=http to run as a Streamable HTTP server (default port 3000)
- *   - Leave unset (or set TRANSPORT=stdio) for stdio mode (local Claude integration)
+ *   - Set TRANSPORT=http (or leave unset on Hostinger) to run as HTTP server
+ *   - Set TRANSPORT=stdio for local Claude Desktop integration
  *
- * Optional env vars:
- *   - PLANDA_API_KEY  : Bearer token for authenticated Planda API calls
- *   - PORT            : HTTP server port (default 3000, only for HTTP transport)
+ * Environment variables:
+ *   - PORT            : HTTP server port (Hostinger sets this automatically)
+ *   - TRANSPORT       : "http" (default on Hostinger) or "stdio"
+ *   - PLANDA_API_KEY  : Optional Bearer token for authenticated Planda API calls
+ *   - CORS_ORIGIN     : Allowed CORS origin (default: "*" — open for OpenAI)
  */
 export {};
 //# sourceMappingURL=index.d.ts.map

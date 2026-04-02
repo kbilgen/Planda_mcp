@@ -10,79 +10,164 @@
  *   - planda_search_therapists : Free-text search
  *
  * Transport:
- *   - Set TRANSPORT=http to run as a Streamable HTTP server (default port 3000)
- *   - Leave unset (or set TRANSPORT=stdio) for stdio mode (local Claude integration)
+ *   - Set TRANSPORT=http (or leave unset on Hostinger) to run as HTTP server
+ *   - Set TRANSPORT=stdio for local Claude Desktop integration
  *
- * Optional env vars:
- *   - PLANDA_API_KEY  : Bearer token for authenticated Planda API calls
- *   - PORT            : HTTP server port (default 3000, only for HTTP transport)
+ * Environment variables:
+ *   - PORT            : HTTP server port (Hostinger sets this automatically)
+ *   - TRANSPORT       : "http" (default on Hostinger) or "stdio"
+ *   - PLANDA_API_KEY  : Optional Bearer token for authenticated Planda API calls
+ *   - CORS_ORIGIN     : Allowed CORS origin (default: "*" — open for OpenAI)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express from "express";
+import express, { Request, Response } from "express";
+import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
 
-// ─── Server instance ──────────────────────────────────────────────────────────
+// ─── MCP Server instance ──────────────────────────────────────────────────────
 
-const server = new McpServer({
+const mcpServer = new McpServer({
   name: "planda-mcp-server",
   version: "1.0.0",
 });
 
-registerTherapistTools(server);
+registerTherapistTools(mcpServer);
 
-// ─── Transport: stdio ─────────────────────────────────────────────────────────
+// ─── Transport: stdio (local use) ────────────────────────────────────────────
 
 async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await mcpServer.connect(transport);
   console.error("[planda-mcp-server] Running via stdio transport");
 }
 
-// ─── Transport: Streamable HTTP ───────────────────────────────────────────────
+// ─── Transport: Streamable HTTP (Hostinger / remote) ─────────────────────────
 
 async function runHttp(): Promise<void> {
   const app = express();
+
+  // ── CORS ─────────────────────────────────────────────────────────────────────
+  // OpenAI Playground and Agents SDK call from their servers — allow all origins.
+  // Restrict via CORS_ORIGIN env var if you want tighter control.
+  const corsOrigin = process.env.CORS_ORIGIN ?? "*";
+  app.use(
+    cors({
+      origin: corsOrigin,
+      methods: ["GET", "POST", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id"],
+      exposedHeaders: ["Mcp-Session-Id"],
+    })
+  );
+
+  // Handle OPTIONS preflight for all routes
+  app.options("*", cors());
+
   app.use(express.json());
 
-  // Health check
-  app.get("/health", (_req, res) => {
+  // ── Health check ──────────────────────────────────────────────────────────────
+  app.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", server: "planda-mcp-server", version: "1.0.0" });
   });
 
-  // MCP endpoint — a new stateless transport instance per request
-  app.post("/mcp", async (req, res) => {
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined, // stateless
-      enableJsonResponse: true,
+  // ── Root redirect → /mcp (convenience) ───────────────────────────────────────
+  app.get("/", (_req: Request, res: Response) => {
+    res.json({
+      name: "planda-mcp-server",
+      version: "1.0.0",
+      mcp_endpoint: "/mcp",
+      health_endpoint: "/health",
     });
-
-    res.on("close", () => transport.close());
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
   });
 
+  // ── MCP endpoint — POST (JSON-RPC) ────────────────────────────────────────────
+  // Each request gets its own stateless transport instance to avoid
+  // request-ID collisions under concurrent load.
+  app.post("/mcp", async (req: Request, res: Response) => {
+    try {
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // stateless — no session cookies
+        enableJsonResponse: true,      // return plain JSON, not SSE stream
+      });
+
+      res.on("close", () => {
+        transport.close().catch(() => {/* ignore close errors */});
+      });
+
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (err) {
+      console.error("[planda-mcp-server] POST /mcp error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  });
+
+  // ── MCP endpoint — GET (SSE streaming, required by some MCP clients) ─────────
+  app.get("/mcp", async (req: Request, res: Response) => {
+    try {
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: false, // SSE mode for GET
+      });
+
+      res.on("close", () => {
+        transport.close().catch(() => {/* ignore */});
+      });
+
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (err) {
+      console.error("[planda-mcp-server] GET /mcp error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  });
+
+  // ── MCP endpoint — DELETE (session termination) ───────────────────────────────
+  app.delete("/mcp", async (req: Request, res: Response) => {
+    try {
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
+      });
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (err) {
+      console.error("[planda-mcp-server] DELETE /mcp error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  });
+
+  // ── Listen on 0.0.0.0 (required for Hostinger / container envs) ─────────────
   const port = parseInt(process.env.PORT ?? "3000", 10);
-  app.listen(port, () => {
+  app.listen(port, "0.0.0.0", () => {
     console.error(
-      `[planda-mcp-server] Running via HTTP transport on http://localhost:${port}/mcp`
+      `[planda-mcp-server] HTTP server listening on 0.0.0.0:${port}`
     );
+    console.error(`[planda-mcp-server] MCP endpoint: http://0.0.0.0:${port}/mcp`);
   });
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
+// Hostinger Node.js hosting: set TRANSPORT=http in environment variables panel.
+// Default is also "http" here since this server is deployed as a web service.
 
-const transport = (process.env.TRANSPORT ?? "stdio").toLowerCase();
+const transportMode = (process.env.TRANSPORT ?? "http").toLowerCase();
 
-if (transport === "http") {
-  runHttp().catch((err: unknown) => {
+if (transportMode === "stdio") {
+  runStdio().catch((err: unknown) => {
     console.error("[planda-mcp-server] Fatal error:", err);
     process.exit(1);
   });
 } else {
-  runStdio().catch((err: unknown) => {
+  runHttp().catch((err: unknown) => {
     console.error("[planda-mcp-server] Fatal error:", err);
     process.exit(1);
   });
