@@ -25,16 +25,20 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import express from "express";
 import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
-// ─── MCP Server instance ──────────────────────────────────────────────────────
-const mcpServer = new McpServer({
-    name: "planda-mcp-server",
-    version: "1.0.0",
-});
-registerTherapistTools(mcpServer);
+// ─── Factory: create a fresh MCP server instance (for stateless HTTP mode) ───
+function createMcpServer() {
+    const server = new McpServer({
+        name: "planda-mcp-server",
+        version: "1.0.0",
+    });
+    registerTherapistTools(server);
+    return server;
+}
 // ─── Transport: stdio (local use) ────────────────────────────────────────────
 async function runStdio() {
     const transport = new StdioServerTransport();
-    await mcpServer.connect(transport);
+    const server = createMcpServer();
+    await server.connect(transport);
     console.error("[planda-mcp-server] Running via stdio transport");
 }
 // ─── Transport: Streamable HTTP (Hostinger / remote) ─────────────────────────
@@ -67,10 +71,12 @@ async function runHttp() {
         });
     });
     // ── MCP endpoint — POST (JSON-RPC) ────────────────────────────────────────────
-    // Each request gets its own stateless transport instance to avoid
-    // request-ID collisions under concurrent load.
+    // Each request gets its own McpServer + transport instance (stateless mode).
+    // SDK 1.x throws "Already connected" if connect() is called twice on the same
+    // server instance, so we must create a fresh server per request.
     app.post("/mcp", async (req, res) => {
         try {
+            const server = createMcpServer();
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: undefined, // stateless — no session cookies
                 enableJsonResponse: true, // return plain JSON, not SSE stream
@@ -78,7 +84,7 @@ async function runHttp() {
             res.on("close", () => {
                 transport.close().catch(() => { });
             });
-            await mcpServer.connect(transport);
+            await server.connect(transport);
             await transport.handleRequest(req, res, req.body);
         }
         catch (err) {
@@ -91,6 +97,7 @@ async function runHttp() {
     // ── MCP endpoint — GET (SSE streaming, required by some MCP clients) ─────────
     app.get("/mcp", async (req, res) => {
         try {
+            const server = createMcpServer();
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: undefined,
                 enableJsonResponse: false, // SSE mode for GET
@@ -98,7 +105,7 @@ async function runHttp() {
             res.on("close", () => {
                 transport.close().catch(() => { });
             });
-            await mcpServer.connect(transport);
+            await server.connect(transport);
             await transport.handleRequest(req, res);
         }
         catch (err) {
@@ -111,11 +118,12 @@ async function runHttp() {
     // ── MCP endpoint — DELETE (session termination) ───────────────────────────────
     app.delete("/mcp", async (req, res) => {
         try {
+            const server = createMcpServer();
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: undefined,
                 enableJsonResponse: true,
             });
-            await mcpServer.connect(transport);
+            await server.connect(transport);
             await transport.handleRequest(req, res);
         }
         catch (err) {
