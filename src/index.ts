@@ -62,8 +62,8 @@ async function runHttp(): Promise<void> {
     })
   );
 
-  // Handle OPTIONS preflight for all routes
-  app.options("*", cors());
+  // Handle OPTIONS preflight for all routes (Express 4 compatible)
+  app.options("*" as string, cors() as express.RequestHandler);
 
   app.use(express.json());
 

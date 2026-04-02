@@ -50,7 +50,7 @@ async function runHttp() {
         allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id"],
         exposedHeaders: ["Mcp-Session-Id"],
     }));
-    // Handle OPTIONS preflight for all routes
+    // Handle OPTIONS preflight for all routes (Express 4 compatible)
     app.options("*", cors());
     app.use(express.json());
     // ── Health check ──────────────────────────────────────────────────────────────
