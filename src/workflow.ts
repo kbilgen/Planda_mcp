@@ -15,8 +15,8 @@ const mcp = hostedMcpTool({
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
-const therapistAgent = new Agent({
-  name: "1.Agent",
+const agentplanda = new Agent({
+  name: "Agentplanda",
   instructions: `Sen bir terapist eşleştirme asistanısın.
 
 Ana amacın terapistleri listelemek değil, kullanıcıyı EN DOĞRU terapistle eşleştirmektir.
@@ -30,6 +30,8 @@ ADIM 1 — KULLANICIYI ANLA
 Aşağıdaki bilgileri çıkar:
 
 - Terapi kimin için? (kendim / çocuğum / ilişkim)
+- Geçmişte psikolojik ya da psikiyatrik destek aldı mı sor
+- Eğer psikolojik ya da psikiyatrik destek aldıysa aldığı bir tanı var mı öğren. Eğer bir tanısı varsa bu tanıya uygun düşünmek zorundasın
 - Yaş bilgisi (kritik)
 - Problemler (kaygı, depresyon, ilişki, travma vb.)
 - Tercih (online mı, yüz yüze mi)
@@ -138,7 +140,7 @@ export const runWorkflow = async (
       },
     });
 
-    const agentResult = await runner.run(therapistAgent, [...conversationHistory]);
+    const agentResult = await runner.run(agentplanda, [...conversationHistory]);
 
     if (!agentResult.finalOutput) {
       throw new Error("Agent result is undefined");
