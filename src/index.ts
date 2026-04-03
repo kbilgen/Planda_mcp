@@ -96,6 +96,7 @@ async function runHttp(): Promise<void> {
       const response = await axios.post(
         "https://api.openai.com/v1/responses",
         {
+          model: "gpt-4.1",
           workflow_id: "wf_69ceac5a340c81908ac3f8d49e1afa0103e85e9ffaa5af21",
           input: message,
         },
