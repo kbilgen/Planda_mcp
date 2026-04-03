@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Planda — Terapist Bul</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3a;
+      --accent: #7c6af7;
+      --accent-light: #9d8ff8;
+      --text: #e8e9f0;
+      --muted: #8b8fa8;
+      --user-bubble: #2d2b4e;
+      --bot-bubble: #1e2130;
+      --radius: 16px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* ─── Header ─── */
+    header {
+      width: 100%;
+      max-width: 720px;
+      padding: 20px 24px 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      width: 36px; height: 36px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: grid; place-items: center;
+      font-size: 18px;
+    }
+
+    header h1 { font-size: 20px; font-weight: 700; }
+    header span { font-size: 13px; color: var(--muted); margin-left: 4px; }
+
+    /* ─── Chat area ─── */
+    #chat {
+      flex: 1;
+      width: 100%;
+      max-width: 720px;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      scroll-behavior: smooth;
+    }
+
+    /* ─── Welcome ─── */
+    .welcome {
+      margin: auto;
+      text-align: center;
+      padding: 48px 24px;
+    }
+    .welcome .icon { font-size: 48px; margin-bottom: 16px; }
+    .welcome h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .welcome p { color: var(--muted); font-size: 15px; line-height: 1.6; }
+
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    .suggestion {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .suggestion:hover { border-color: var(--accent); background: var(--user-bubble); }
+
+    /* ─── Messages ─── */
+    .msg {
+      display: flex;
+      gap: 10px;
+      max-width: 100%;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+    .msg.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      flex-shrink: 0;
+      display: grid; place-items: center;
+      font-size: 14px;
+      align-self: flex-end;
+    }
+    .msg.user .avatar { background: var(--accent); }
+    .msg.bot  .avatar { background: var(--surface); border: 1px solid var(--border); }
+
+    .bubble {
+      max-width: 85%;
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      font-size: 15px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user .bubble { background: var(--user-bubble); border-bottom-right-radius: 4px; }
+    .msg.bot  .bubble { background: var(--bot-bubble); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+
+    /* Markdown-ish styling inside bubble */
+    .bubble h1, .bubble h2, .bubble h3 {
+      font-weight: 700; margin: 12px 0 4px;
+      color: var(--accent-light);
+    }
+    .bubble h1 { font-size: 17px; }
+    .bubble h2 { font-size: 16px; }
+    .bubble h3 { font-size: 15px; }
+    .bubble strong { color: var(--text); font-weight: 600; }
+    .bubble ul, .bubble ol { padding-left: 20px; margin: 6px 0; }
+    .bubble li { margin: 3px 0; }
+    .bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+    .bubble a { color: var(--accent-light); }
+    .bubble code { background: rgba(124,106,247,0.15); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+
+    /* Typing indicator */
+    .typing .bubble { padding: 14px 18px; }
+    .dots { display: flex; gap: 5px; align-items: center; }
+    .dots span {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--muted);
+      animation: bounce 1.2s infinite;
+    }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+      40% { transform: translateY(-6px); opacity: 1; }
+    }
+
+    /* ─── Input bar ─── */
+    .input-bar {
+      width: 100%;
+      max-width: 720px;
+      padding: 16px 24px 24px;
+    }
+    .input-wrap {
+      display: flex;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px 10px 10px 16px;
+      transition: border-color 0.2s;
+    }
+    .input-wrap:focus-within { border-color: var(--accent); }
+
+    textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 15px;
+      font-family: inherit;
+      resize: none;
+      line-height: 1.5;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+    textarea::placeholder { color: var(--muted); }
+
+    button#send {
+      width: 38px; height: 38px;
+      background: var(--accent);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: grid; place-items: center;
+      transition: background 0.2s, opacity 0.2s;
+      align-self: flex-end;
+    }
+    button#send:hover { background: var(--accent-light); }
+    button#send:disabled { opacity: 0.4; cursor: not-allowed; }
+    button#send svg { fill: white; }
+
+    .hint {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🧠</div>
+  <div>
+    <h1>Planda <span>Terapist Asistanı</span></h1>
+  </div>
+</header>
+
+<div id="chat">
+  <div class="welcome" id="welcome">
+    <div class="icon">🌿</div>
+    <h2>Sana uygun terapisti bulalım</h2>
+    <p>İhtiyaçlarını, yaşadığın şehri veya bütçeni belirt.<br>Ben sana en uygun terapistleri listeleyeyim.</p>
+    <div class="suggestions">
+      <span class="suggestion">Kaygı için online terapist arıyorum</span>
+      <span class="suggestion">İstanbul'da çift terapisi</span>
+      <span class="suggestion">Depresyon uzmanı, bütçem 1000₺</span>
+      <span class="suggestion">Türkçe konuşan kadın terapist</span>
+    </div>
+  </div>
+</div>
+
+<div class="input-bar">
+  <div class="input-wrap">
+    <textarea
+      id="input"
+      rows="1"
+      placeholder="Terapist arayın... (ör. 'kaygı için İstanbul'da terapist')"
+    ></textarea>
+    <button id="send" title="Gönder">
+      <svg width="16" height="16" viewBox="0 0 24 24">
+        <path d="M2 21l21-9L2 3v7l15 2-15 2z"/>
+      </svg>
+    </button>
+  </div>
+  <p class="hint">Enter ile gönder · Shift+Enter yeni satır</p>
+</div>
+
+<script>
+  const chatEl   = document.getElementById("chat");
+  const inputEl  = document.getElementById("input");
+  const sendBtn  = document.getElementById("send");
+  const welcome  = document.getElementById("welcome");
+
+  // Auto-resize textarea
+  inputEl.addEventListener("input", () => {
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + "px";
+  });
+
+  // Suggestion clicks
+  document.querySelectorAll(".suggestion").forEach(el => {
+    el.addEventListener("click", () => {
+      inputEl.value = el.textContent;
+      inputEl.dispatchEvent(new Event("input"));
+      send();
+    });
+  });
+
+  // Enter to send
+  inputEl.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  sendBtn.addEventListener("click", send);
+
+  function addMsg(role, html) {
+    const div = document.createElement("div");
+    div.className = `msg ${role}`;
+    div.innerHTML = `
+      <div class="avatar">${role === "user" ? "👤" : "🤖"}</div>
+      <div class="bubble">${html}</div>
+    `;
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return div;
+  }
+
+  function addTyping() {
+    const div = document.createElement("div");
+    div.className = "msg bot typing";
+    div.innerHTML = `
+      <div class="avatar">🤖</div>
+      <div class="bubble"><div class="dots"><span></span><span></span><span></span></div></div>
+    `;
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return div;
+  }
+
+  // Simple markdown renderer
+  function renderMarkdown(text) {
+    return text
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+      .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+      .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/`(.+?)`/g, "<code>$1</code>")
+      .replace(/^---$/gm, "<hr>")
+      .replace(/^\* (.+)$/gm, "<li>$1</li>")
+      .replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>")
+      .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank">$1</a>')
+      .replace(/\n/g, "<br>");
+  }
+
+  async function send() {
+    const msg = inputEl.value.trim();
+    if (!msg) return;
+
+    welcome?.remove();
+    inputEl.value = "";
+    inputEl.style.height = "auto";
+    sendBtn.disabled = true;
+
+    addMsg("user", renderMarkdown(msg));
+    const typing = addTyping();
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg }),
+      });
+      const data = await res.json();
+      typing.remove();
+
+      if (data.error) {
+        addMsg("bot", `<span style="color:#f87171">Hata: ${data.error}</span>`);
+      } else {
+        addMsg("bot", renderMarkdown(data.response || "Yanıt alınamadı."));
+      }
+    } catch (e) {
+      typing.remove();
+      addMsg("bot", `<span style="color:#f87171">Bağlantı hatası. Lütfen tekrar deneyin.</span>`);
+    }
+
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+</script>
+</body>
+</html>

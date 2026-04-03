@@ -24,7 +24,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import cors from "cors";
+import axios from "axios";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import { registerTherapistTools } from "./tools/therapists.js";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 // ─── Factory: create a fresh MCP server instance (for stateless HTTP mode) ───
 function createMcpServer() {
     const server = new McpServer({
@@ -61,14 +66,43 @@ async function runHttp() {
     app.get("/health", (_req, res) => {
         res.json({ status: "ok", server: "planda-mcp-server", version: "1.0.0" });
     });
-    // ── Root redirect → /mcp (convenience) ───────────────────────────────────────
+    // ── Static UI files ───────────────────────────────────────────────────────────
+    app.use(express.static(join(__dirname, "../public")));
+    // ── Chat API — proxies to OpenAI workflow ─────────────────────────────────────
+    app.post("/api/chat", async (req, res) => {
+        const { message } = req.body;
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) {
+            res.status(500).json({ error: "OPENAI_API_KEY not set" });
+            return;
+        }
+        try {
+            const response = await axios.post("https://api.openai.com/v1/responses", {
+                workflow_id: "wf_69ceac5a340c81908ac3f8d49e1afa0103e85e9ffaa5af21",
+                input: message,
+            }, {
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                timeout: 60_000,
+            });
+            const output = response.data?.output ?? [];
+            const text = output.find((o) => o.type === "message")
+                ?.content?.[0]?.text ?? JSON.stringify(response.data);
+            res.json({ response: text });
+        }
+        catch (err) {
+            const msg = axios.isAxiosError(err)
+                ? err.response?.data ?? err.message
+                : String(err);
+            console.log("[planda-mcp-server] /api/chat error:", msg);
+            res.status(502).json({ error: msg });
+        }
+    });
+    // ── Root → serve UI ───────────────────────────────────────────────────────────
     app.get("/", (_req, res) => {
-        res.json({
-            name: "planda-mcp-server",
-            version: "1.0.0",
-            mcp_endpoint: "/mcp",
-            health_endpoint: "/health",
-        });
+        res.sendFile(join(__dirname, "../public/index.html"));
     });
     // ── MCP endpoint — POST (JSON-RPC) ────────────────────────────────────────────
     // Each request gets its own McpServer + transport instance (stateless mode).
