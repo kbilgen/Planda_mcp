@@ -97,8 +97,17 @@ async function runHttp(): Promise<void> {
         "https://api.openai.com/v1/responses",
         {
           model: "gpt-4.1",
-          workflow_id: "wf_69ceac5a340c81908ac3f8d49e1afa0103e85e9ffaa5af21",
           input: message,
+          instructions:
+            "Sen bir terapist arama asistanısın. SADECE Planda MCP araçlarını kullanarak terapist ara ve sonuçları Türkçe olarak sun. Konu dışı sorulara cevap verme.",
+          tools: [
+            {
+              type: "mcp",
+              server_label: "planda",
+              server_url: "https://plandamcp-production.up.railway.app/mcp",
+              require_approval: "never",
+            },
+          ],
         },
         {
           headers: {
