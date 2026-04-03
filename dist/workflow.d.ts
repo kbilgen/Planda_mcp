@@ -3,5 +3,5 @@ export type WorkflowInput = {
 };
 export declare const runWorkflow: (workflow: WorkflowInput) => Promise<{
     output_text: string;
-} | Record<string, unknown>>;
+}>;
 //# sourceMappingURL=workflow.d.ts.map
