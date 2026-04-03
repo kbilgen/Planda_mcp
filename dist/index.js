@@ -24,10 +24,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import cors from "cors";
-import axios from "axios";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { registerTherapistTools } from "./tools/therapists.js";
+import { runWorkflow } from "./workflow.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 // ─── Factory: create a fresh MCP server instance (for stateless HTTP mode) ───
@@ -68,45 +68,21 @@ async function runHttp() {
     });
     // ── Static UI files ───────────────────────────────────────────────────────────
     app.use(express.static(join(__dirname, "../public")));
-    // ── Chat API — proxies to OpenAI workflow ─────────────────────────────────────
+    // ── Chat API — runs OpenAI Agents workflow ────────────────────────────────────
     app.post("/api/chat", async (req, res) => {
         const { message } = req.body;
-        const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) {
+        if (!process.env.OPENAI_API_KEY) {
             res.status(500).json({ error: "OPENAI_API_KEY not set" });
             return;
         }
         try {
-            const response = await axios.post("https://api.openai.com/v1/responses", {
-                model: "gpt-4.1",
-                input: message,
-                instructions: "Sen bir terapist arama asistanısın. SADECE Planda MCP araçlarını kullanarak terapist ara ve sonuçları Türkçe olarak sun. Konu dışı sorulara cevap verme.",
-                tools: [
-                    {
-                        type: "mcp",
-                        server_label: "planda",
-                        server_url: "https://plandamcp-production.up.railway.app/mcp",
-                        require_approval: "never",
-                    },
-                ],
-            }, {
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                },
-                timeout: 60_000,
-            });
-            const output = response.data?.output ?? [];
-            const text = output.find((o) => o.type === "message")
-                ?.content?.[0]?.text ?? JSON.stringify(response.data);
+            const result = await runWorkflow({ input_as_text: message });
+            const text = result.output_text ?? JSON.stringify(result);
             res.json({ response: text });
         }
         catch (err) {
-            const msg = axios.isAxiosError(err)
-                ? err.response?.data ?? err.message
-                : String(err);
-            console.log("[planda-mcp-server] /api/chat error:", msg);
-            res.status(502).json({ error: msg });
+            console.log("[planda-mcp-server] /api/chat error:", err);
+            res.status(502).json({ error: String(err) });
         }
     });
     // ── Root → serve UI ───────────────────────────────────────────────────────────
