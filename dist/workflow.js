@@ -105,7 +105,7 @@ Kullanıcı şu hissi yaşamalı:
     model: "gpt-4.1",
     tools: [mcp],
     modelSettings: {
-        temperature: 1,
+        temperature: 0.3,
         topP: 1,
         maxTokens: 2048,
         store: true,
