@@ -1,140 +1,20 @@
-/**
- * Planda workflow — Claude API with direct tool execution
- *
- * Uses Anthropic's Claude model (same as Claude Desktop) so the chat UI
- * gives the same quality results as the MCP integration in Claude Desktop.
- */
-import Anthropic from "@anthropic-ai/sdk";
-import { makeApiRequest, handleApiError } from "./services/apiClient.js";
-const client = new Anthropic();
-// ─── Tool definitions ─────────────────────────────────────────────────────────
-const TOOLS = [
-    {
-        name: "planda_list_therapists",
-        description: "Returns a list of therapists from the Planda marketplace with optional filters. Use per_page up to 200 for broad searches.",
-        input_schema: {
-            type: "object",
-            properties: {
-                page: { type: "number", description: "Page number (default 1)" },
-                per_page: { type: "number", description: "Results per page (default 50, max 10000)" },
-                search_query: { type: "string", description: "Free-text search" },
-                specialties: { type: "string", description: "Specialty slug(s), comma-separated" },
-                field: { type: "string", description: "Field slug" },
-                service: { type: "string", description: "Service category slug" },
-                city: { type: "string", description: "City name" },
-                online: { type: "boolean", description: "true for online-only" },
-                gender: { type: "string", description: "female or male" },
-                min_price: { type: "number", description: "Minimum price" },
-                max_price: { type: "number", description: "Maximum price" },
-            },
-        },
-    },
-    {
-        name: "planda_get_therapist",
-        description: "Fetches full profile of a single therapist by ID.",
-        input_schema: {
-            type: "object",
-            properties: {
-                id: { type: ["string", "number"], description: "Therapist ID" },
-            },
-            required: ["id"],
-        },
-    },
-    {
-        name: "planda_search_therapists",
-        description: "Free-text search across therapist profiles.",
-        input_schema: {
-            type: "object",
-            properties: {
-                query: { type: "string", description: "Search query (min 2 chars)" },
-                page: { type: "number", description: "Page number" },
-                per_page: { type: "number", description: "Results per page (max 10000)" },
-            },
-            required: ["query"],
-        },
-    },
-    {
-        name: "planda_check_availability",
-        description: "Quickly checks how many therapists are available for given criteria (returns count only, no profiles). Use before asking follow-up questions.",
-        input_schema: {
-            type: "object",
-            properties: {
-                city: { type: "string", description: "City to check" },
-                online: { type: "boolean", description: "Check online count" },
-                search_query: { type: "string", description: "Problem/specialty term" },
-                service: { type: "string", description: "Service category slug" },
-            },
-        },
-    },
-];
-// ─── Tool execution ───────────────────────────────────────────────────────────
-async function executeTool(name, input) {
-    try {
-        if (name === "planda_list_therapists") {
-            const query = {
-                page: input.page ?? 1,
-                per_page: input.per_page ?? 50,
-            };
-            if (input.search_query)
-                query.search_query = input.search_query;
-            if (input.specialties)
-                query.specialties = input.specialties;
-            if (input.field)
-                query.field = input.field;
-            if (input.service)
-                query.service = input.service;
-            if (input.city)
-                query.city = input.city;
-            if (input.online !== undefined)
-                query.online = input.online;
-            if (input.gender)
-                query.gender = input.gender;
-            if (input.min_price !== undefined)
-                query.min_price = input.min_price;
-            if (input.max_price !== undefined)
-                query.max_price = input.max_price;
-            const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, query);
-            const therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
-            const total = raw.meta?.total ?? raw.total ?? therapists.length;
-            return JSON.stringify({ total, count: therapists.length, therapists });
-        }
-        if (name === "planda_get_therapist") {
-            const raw = await makeApiRequest(`marketplace/therapists/${input.id}`);
-            const therapist = "data" in raw && raw.data ? raw.data : raw;
-            return JSON.stringify(therapist);
-        }
-        if (name === "planda_search_therapists") {
-            const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, {
-                search_query: input.query,
-                page: input.page ?? 1,
-                per_page: input.per_page ?? 50,
-            });
-            const therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
-            const total = raw.meta?.total ?? raw.total ?? therapists.length;
-            return JSON.stringify({ total, count: therapists.length, therapists });
-        }
-        if (name === "planda_check_availability") {
-            const query = { per_page: 1, page: 1 };
-            if (input.city)
-                query.city = input.city;
-            if (input.online !== undefined)
-                query.online = input.online;
-            if (input.search_query)
-                query.search_query = input.search_query;
-            if (input.service)
-                query.service = input.service;
-            const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, query);
-            const total = raw.meta?.total ?? raw.total ?? raw.count ?? 0;
-            return JSON.stringify({ total, filters: input });
-        }
-        return JSON.stringify({ error: `Unknown tool: ${name}` });
-    }
-    catch (err) {
-        return JSON.stringify({ error: handleApiError(err) });
-    }
-}
-// ─── System prompt ────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Sen Planda platformu için çalışan bir terapist eşleştirme asistanısın. Amacın danışanın anlattığı sorunu, ihtiyaçlarını ve pratik tercihlerini anlayarak MCP araçların aracılığıyla en uygun terapisti bulmak.
+import { hostedMcpTool, Agent, Runner, withTrace } from "@openai/agents";
+// ─── MCP Tool ────────────────────────────────────────────────────────────────
+const mcp = hostedMcpTool({
+    serverLabel: "Kaan_mcp",
+    allowedTools: [
+        "planda_list_therapists",
+        "planda_get_therapist",
+        "planda_search_therapists",
+        "planda_check_availability",
+    ],
+    requireApproval: "never",
+    serverUrl: "https://plandamcp-production.up.railway.app/mcp",
+});
+// ─── Agent ────────────────────────────────────────────────────────────────────
+const agentplanda = new Agent({
+    name: "Agentplanda",
+    instructions: `Sen Planda platformu için çalışan bir terapist eşleştirme asistanısın. Amacın danışanın anlattığı sorunu, ihtiyaçlarını ve pratik tercihlerini anlayarak MCP araçların aracılığıyla en uygun terapisti bulmak.
 
 Bir psikolog veya terapist değilsin — tanı koyamazsın, tıbbi tavsiye veremezsin. Sadece doğru profesyoneli bulmalarına yardım edersin.
 
@@ -257,54 +137,49 @@ Hiç eşleşme yoksa asla boş dönme:
 - Tam profili okumadan (planda_get_therapist) öneri yapma
 - Kullanıcı çocuğu için arıyorsa: 13 yaş altı için platform uygun olmayabilir, bunu belirt
 - Bütçesi düşük kullanıcıya pahalı terapist önerme
-- Kullanıcıyı acele ettirme — bu karar önemli`;
+- Kullanıcıyı acele ettirme — bu karar önemli`,
+    model: "gpt-4.5-mini",
+    tools: [mcp],
+    modelSettings: {
+        temperature: 0.3,
+        topP: 1,
+        maxTokens: 2048,
+        store: true,
+    },
+});
 export const runWorkflow = async (workflow) => {
-    // Build conversation messages for Claude
-    const prior = (workflow.history ?? []).slice(0, -1);
-    const messages = [
-        ...prior.map((m) => ({
-            role: m.role,
-            content: m.content,
-        })),
-        { role: "user", content: workflow.input_as_text },
-    ];
-    // Agentic loop — keep going until Claude stops calling tools
-    let continueLoop = true;
-    while (continueLoop) {
-        const response = await client.messages.create({
-            model: "claude-sonnet-4-6",
-            max_tokens: 4096,
-            system: SYSTEM_PROMPT,
-            tools: TOOLS,
-            messages,
-        });
-        // Add Claude's response to the message history
-        messages.push({ role: "assistant", content: response.content });
-        if (response.stop_reason === "tool_use") {
-            // Execute all tool calls and add results
-            const toolResults = [];
-            for (const block of response.content) {
-                if (block.type === "tool_use") {
-                    const result = await executeTool(block.name, block.input);
-                    toolResults.push({
-                        type: "tool_result",
-                        tool_use_id: block.id,
-                        content: result,
-                    });
+    return await withTrace("Planda", async () => {
+        // Build full conversation history for the agent.
+        // Exclude the current user message from history (it's already in input_as_text).
+        const prior = (workflow.history ?? []).slice(0, -1);
+        const conversationHistory = [
+            ...prior.map((m) => {
+                if (m.role === "user") {
+                    return { role: "user", content: m.content };
                 }
-            }
-            messages.push({ role: "user", content: toolResults });
+                // assistant turn
+                return {
+                    role: "assistant",
+                    status: "completed",
+                    content: [{ type: "output_text", text: m.content }],
+                };
+            }),
+            {
+                role: "user",
+                content: [{ type: "input_text", text: workflow.input_as_text }],
+            },
+        ];
+        const runner = new Runner({
+            traceMetadata: {
+                __trace_source__: "agent-builder",
+                workflow_id: "wf_69ceac5a340c81908ac3f8d49e1afa0103e85e9ffaa5af21",
+            },
+        });
+        const agentResult = await runner.run(agentplanda, [...conversationHistory]);
+        if (!agentResult.finalOutput) {
+            throw new Error("Agent result is undefined");
         }
-        else {
-            // end_turn or other stop — extract text and finish
-            continueLoop = false;
-            const textBlock = response.content.find((b) => b.type === "text");
-            if (textBlock && textBlock.type === "text") {
-                return { output_text: textBlock.text };
-            }
-            throw new Error("No text output from Claude");
-        }
-    }
-    throw new Error("Unexpected end of agentic loop");
+        return { output_text: agentResult.finalOutput };
+    });
 };
 //# sourceMappingURL=workflow.js.map
