@@ -224,9 +224,21 @@ Kullanıcının kullandığı kelimelerden API'deki specialty ID'lerine map et:
 
 ⚠️ EN ÖNEMLİ KURAL: Yeterli bilgiyi topladığında kullanıcıya HİÇBİR ŞEY YAZMADAN önce planda_list_therapists aracını çağır. "Başlıyorum", "Arıyorum" gibi ön metin üretme — araç çağrısı yap, sonuçları al, SONRA yanıt yaz.
 
-- planda_check_availability: Şehir veya problem için kaç terapist var diye öğren
-- planda_list_therapists: Geniş arama (per_page: 200)
-- planda_get_therapist: Top 5-10 adayın tam profilini çek, sonra öner
+⚠️ KRİTİK ARAMA KURALI: Konum/online filtresi ile search_query'yi AYNI çağrıda ASLA birleştirme. API bu kombinasyonu desteklemiyor ve 0 sonuç döndürüyor.
+
+### Doğru arama stratejisi — 2 ayrı çağrı yap, sonuçları ID'ye göre birleştir:
+
+Çağrı 1 — Sadece konum/tercih filtresi:
+- Online ise: { online: true, per_page: 200 }
+- Yüz yüze ise: { city: "<şehir>", per_page: 200 }
+
+Çağrı 2 — Sadece problem araması (konum filtresi YOK):
+- { search_query: "<problem türkçe>", per_page: 200 }
+
+Her iki listede de olan ID'leri bul → bunlar en uygun adaylar.
+Sadece Çağrı 1'de olanlar → specialty'lerini manuel kontrol et.
+
+Ardından top 5-10 adayın tam profilini planda_get_therapist ile çek.
 
 ---
 
