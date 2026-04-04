@@ -24,7 +24,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import cors from "cors";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import { registerTherapistTools } from "./tools/therapists.js";
+import { runWorkflow } from "./workflow.js";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 // ─── Factory: create a fresh MCP server instance (for stateless HTTP mode) ───
 function createMcpServer() {
     const server = new McpServer({
@@ -39,7 +44,7 @@ async function runStdio() {
     const transport = new StdioServerTransport();
     const server = createMcpServer();
     await server.connect(transport);
-    console.error("[planda-mcp-server] Running via stdio transport");
+    console.log("[planda-mcp-server] Running via stdio transport");
 }
 // ─── Transport: Streamable HTTP (Hostinger / remote) ─────────────────────────
 async function runHttp() {
@@ -61,14 +66,28 @@ async function runHttp() {
     app.get("/health", (_req, res) => {
         res.json({ status: "ok", server: "planda-mcp-server", version: "1.0.0" });
     });
-    // ── Root redirect → /mcp (convenience) ───────────────────────────────────────
+    // ── Static UI files ───────────────────────────────────────────────────────────
+    app.use(express.static(join(__dirname, "../public")));
+    // ── Chat API — runs OpenAI Agents workflow ────────────────────────────────────
+    app.post("/api/chat", async (req, res) => {
+        const { message, history } = req.body;
+        if (!process.env.OPENAI_API_KEY) {
+            res.status(500).json({ error: "OPENAI_API_KEY not set" });
+            return;
+        }
+        try {
+            const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
+            const text = result.output_text ?? JSON.stringify(result);
+            res.json({ response: text });
+        }
+        catch (err) {
+            console.log("[planda-mcp-server] /api/chat error:", err);
+            res.status(502).json({ error: String(err) });
+        }
+    });
+    // ── Root → serve UI ───────────────────────────────────────────────────────────
     app.get("/", (_req, res) => {
-        res.json({
-            name: "planda-mcp-server",
-            version: "1.0.0",
-            mcp_endpoint: "/mcp",
-            health_endpoint: "/health",
-        });
+        res.sendFile(join(__dirname, "../public/index.html"));
     });
     // ── MCP endpoint — POST (JSON-RPC) ────────────────────────────────────────────
     // Each request gets its own McpServer + transport instance (stateless mode).
@@ -88,7 +107,7 @@ async function runHttp() {
             await transport.handleRequest(req, res, req.body);
         }
         catch (err) {
-            console.error("[planda-mcp-server] POST /mcp error:", err);
+            console.log("[planda-mcp-server] POST /mcp error:", err);
             if (!res.headersSent) {
                 res.status(500).json({ error: "Internal server error" });
             }
@@ -109,7 +128,7 @@ async function runHttp() {
             await transport.handleRequest(req, res);
         }
         catch (err) {
-            console.error("[planda-mcp-server] GET /mcp error:", err);
+            console.log("[planda-mcp-server] GET /mcp error:", err);
             if (!res.headersSent) {
                 res.status(500).json({ error: "Internal server error" });
             }
@@ -127,7 +146,7 @@ async function runHttp() {
             await transport.handleRequest(req, res);
         }
         catch (err) {
-            console.error("[planda-mcp-server] DELETE /mcp error:", err);
+            console.log("[planda-mcp-server] DELETE /mcp error:", err);
             if (!res.headersSent) {
                 res.status(500).json({ error: "Internal server error" });
             }
@@ -136,23 +155,34 @@ async function runHttp() {
     // ── Listen on 0.0.0.0 (required for Hostinger / container envs) ─────────────
     const port = parseInt(process.env.PORT ?? "3000", 10);
     app.listen(port, "0.0.0.0", () => {
-        console.error(`[planda-mcp-server] HTTP server listening on 0.0.0.0:${port}`);
-        console.error(`[planda-mcp-server] MCP endpoint: http://0.0.0.0:${port}/mcp`);
+        console.log(`[planda-mcp-server] HTTP server listening on 0.0.0.0:${port}`);
+        console.log(`[planda-mcp-server] MCP endpoint: http://0.0.0.0:${port}/mcp`);
     });
 }
 // ─── Entry point ──────────────────────────────────────────────────────────────
 // Hostinger Node.js hosting: set TRANSPORT=http in environment variables panel.
 // Default is also "http" here since this server is deployed as a web service.
+process.on("uncaughtException", (err) => {
+    console.log("[planda-mcp-server] Uncaught exception:", err);
+    process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+    console.log("[planda-mcp-server] Unhandled rejection:", reason);
+    process.exit(1);
+});
+console.log("[planda-mcp-server] Starting up...");
+console.log("[planda-mcp-server] Node version:", process.version);
+console.log("[planda-mcp-server] PORT env:", process.env.PORT);
 const transportMode = (process.env.TRANSPORT ?? "http").toLowerCase();
 if (transportMode === "stdio") {
     runStdio().catch((err) => {
-        console.error("[planda-mcp-server] Fatal error:", err);
+        console.log("[planda-mcp-server] Fatal error:", err);
         process.exit(1);
     });
 }
 else {
     runHttp().catch((err) => {
-        console.error("[planda-mcp-server] Fatal error:", err);
+        console.log("[planda-mcp-server] Fatal error:", err);
         process.exit(1);
     });
 }
