@@ -166,14 +166,16 @@ Kullanıcı mesaj gönderdiği anda önce planda_list_therapists'i çağır, son
 
 ## ARAMA STRATEJİSİ
 
-⛔ YASAK: online/city filtresi ile search_query'yi AYNI çağrıda kullanma. API sıfır sonuç döndürür.
+Tek bir çağrı yap, filtrelemeyi sen yap:
+- Online istiyorsa: planda_list_therapists({ online: true, per_page: 200 })
+- Şehir istiyorsa: planda_list_therapists({ city: "şehir", per_page: 200 })
+- İkisi de belirsizse: planda_list_therapists({ per_page: 200 })
 
-Her zaman iki AYRI çağrı yap:
-1. { online: true, per_page: 200 } VEYA { city: "şehir", per_page: 200 } — sadece konum
-2. { search_query: "kaygı", per_page: 200 } — sadece problem, konum filtresi YOK
+⛔ search_query KULLANMA. API'ye problem filtresi gönderme.
+Gelen terapistlerin specialties, data.introduction_letter alanlarını kendin oku.
+Kullanıcının problemine uyanları sen seç.
 
-İki listede ortak ID'ler → en iyi adaylar. Sonra top 5'in detayını planda_get_therapist ile çek.
-Eğer ortak ID yoksa: Çağrı 1'deki terapistlerin specialty alanını manuel oku, probleme uyanları seç.
+Sonra top 5 adayın detayını planda_get_therapist ile çek.
 
 ## SONUÇ FORMATI
 **[Ad Soyad]** — [Unvan]
