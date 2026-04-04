@@ -12,7 +12,11 @@
   <script>
     (function () {
       var p = new URLSearchParams(location.search);
-      if (p.get("planda_embed") === "1" || p.get("webview") === "1") {
+      // URL param (explicit) OR WKWebView UA detection (no "Safari" token)
+      var byParam = p.get("planda_embed") === "1" || p.get("webview") === "1";
+      var ua = navigator.userAgent;
+      var byUA = /iPhone|iPad|iPod/i.test(ua) && !/Safari/i.test(ua);
+      if (byParam || byUA) {
         document.documentElement.classList.add("embed");
       }
     })();
