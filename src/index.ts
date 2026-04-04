@@ -114,16 +114,19 @@ async function runHttp(): Promise<void> {
       }
 
       const apiBase =
-        process.env.CHATKIT_API_BASE ?? "https://api.openai.com";
+        process.env.CHATKIT_API_BASE ??
+        process.env.VITE_CHATKIT_API_BASE ??
+        "https://api.openai.com";
       const upstream = await fetch(
-        `${apiBase}/v1/beta/realtime/chatkit/sessions`,
+        `${apiBase}/v1/chatkit/sessions`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
+            "Authorization": `Bearer ${apiKey}`,
+            "OpenAI-Beta": "chatkit_beta=v1",
           },
-          body: JSON.stringify({ workflow: { id: workflowId }, user: { id: userId } }),
+          body: JSON.stringify({ workflow: { id: workflowId }, user: userId }),
         }
       );
 
