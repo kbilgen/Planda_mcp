@@ -458,16 +458,29 @@
   if (isWebView) {
     // App has its own nav bar — hide our header and don't add safe-area-top
     document.querySelector("header")?.remove();
+
+    // WKWebView: 100vh is unreliable — pin heights to the actual visible viewport
+    function fixHeights() {
+      const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      const inputBar = document.querySelector(".input-bar");
+      document.body.style.height = vh + "px";
+      chatEl.style.height = (vh - inputBar.offsetHeight) + "px";
+      chatEl.style.flex = "none"; // override flex:1 so explicit height wins
+    }
+    fixHeights();
+
+    // Re-run when keyboard appears/disappears or orientation changes
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", () => {
+        fixHeights();
+        chatEl.scrollTop = chatEl.scrollHeight;
+      });
+    }
+    window.addEventListener("resize", fixHeights);
+
   } else {
     // Browser: add safe-area-top (notch support)
     document.body.classList.add("has-safe-area");
-  }
-
-  // iOS WebView: scroll to bottom when keyboard opens
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", () => {
-      chatEl.scrollTop = chatEl.scrollHeight;
-    });
   }
 
   // iOS: focus input scrolls into view
