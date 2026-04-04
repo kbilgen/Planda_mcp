@@ -1,7 +1,7 @@
 /**
  * Planda MCP Server — TypeScript type definitions
+ * Matches the actual API response from /marketplace/therapists
  */
-/** Response format for tool output */
 export var ResponseFormat;
 (function (ResponseFormat) {
     ResponseFormat["MARKDOWN"] = "markdown";

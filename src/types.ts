@@ -1,38 +1,98 @@
 /**
  * Planda MCP Server — TypeScript type definitions
+ * Matches the actual API response from /marketplace/therapists
  */
 
-/** Response format for tool output */
 export enum ResponseFormat {
   MARKDOWN = "markdown",
   JSON = "json",
 }
 
+export interface TherapistTitle {
+  id: number;
+  name: string;
+}
+
+export interface TherapistOther {
+  min_client_age?: string | number | null;
+  max_client_age?: string | number | null;
+  accept_all_ages?: boolean;
+}
+
+export interface University {
+  id: number;
+  name: string;
+  city_id?: number;
+}
+
+export interface Department {
+  id: number;
+  name: string;
+  degree: string;
+}
+
+export interface TherapistData {
+  id?: number;
+  user_id?: number;
+  introduction_letter?: string | null; // HTML — strip before use
+  inform?: string | null;
+  title?: TherapistTitle;
+  other?: TherapistOther;
+  undergraduateUniversity?: University | null;
+  postgraduateUniversity?: University | null;
+  doctorateUniversity?: University | null;
+  undergraduateDepartment?: Department | null;
+  postgraduateDepartment?: Department | null;
+  doctorateDepartment?: Department | null;
+  rating?: number;
+  weighted_rating?: number;
+  [key: string]: unknown;
+}
+
+export interface Branch {
+  id: number;
+  type: "physical" | "online";
+  name: string;
+  short_name?: string | null;
+  address?: string | null;
+  second_address?: string | null;
+  city?: { id: number; name: string } | null;
+}
+
+export interface ServiceCategory {
+  id: number;
+  name: string;
+  slug: string;
+}
+
+export interface Service {
+  id: number;
+  name: string;
+  custom_duration?: number | null;
+  fee?: string | null;
+  custom_fee?: string | null;
+  category?: ServiceCategory;
+}
+
+export interface Specialty {
+  id: number;
+  name: string;
+}
+
 /** A single therapist entry returned by the Planda marketplace API */
 export interface Therapist {
-  id: string | number;
+  id: number;
   name: string;
-  title?: string;
-  specialty?: string | string[];
-  specialties?: string[];
-  languages?: string[];
-  location?: string;
-  city?: string;
-  country?: string;
-  online?: boolean;
-  price?: number | string;
-  price_per_session?: number | string;
-  currency?: string;
-  rating?: number;
-  review_count?: number;
-  experience_years?: number;
-  bio?: string;
-  profile_url?: string;
-  avatar_url?: string;
-  available?: boolean;
-  gender?: string;
-  approach?: string | string[];
-  education?: string;
+  surname?: string;
+  full_name?: string;
+  username?: string;
+  profile_picture?: string | null;
+  rating?: number | null;
+  data?: TherapistData;
+  branches?: Branch[];
+  services?: Service[];
+  specialties?: Specialty[];
+  campaigns?: unknown[];
   [key: string]: unknown;
 }
 
@@ -43,11 +103,16 @@ export interface TherapistListResponse {
   results?: Therapist[];
   total?: number;
   count?: number;
-  page?: number;
-  per_page?: number;
-  total_pages?: number;
-  next?: string | null;
-  previous?: string | null;
+  meta?: {
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+  };
+  links?: {
+    next?: string | null;
+    prev?: string | null;
+  };
   [key: string]: unknown;
 }
 
