@@ -411,5 +411,74 @@ Error Handling:
             return { content: [{ type: "text", text: handleApiError(error) }] };
         }
     });
+    // ── 4. planda_check_availability ────────────────────────────────────────────
+    // Used to dynamically validate options before asking the user follow-up questions.
+    const CheckSchema = z
+        .object({
+        city: z.string().optional().describe("City to check therapist availability for"),
+        online: z.boolean().optional().describe("Check online therapist count"),
+        search_query: z.string().optional().describe("Problem/specialty term to check"),
+        service: z.string().optional().describe("Service category slug"),
+    })
+        .strict();
+    server.registerTool("planda_check_availability", {
+        title: "Check Therapist Availability",
+        description: `Quickly checks how many therapists are available for given criteria WITHOUT returning full profiles.
+
+Use this BEFORE asking the user follow-up questions, to validate options and shape the conversation:
+- Check if a city has therapists before asking for city preference
+- Check if online therapists exist for a problem before suggesting online option
+- Check counts for different cities to guide the user toward better options
+
+Args:
+  - city (string, optional): City name to check
+  - online (boolean, optional): Check online availability
+  - search_query (string, optional): Problem or specialty term
+  - service (string, optional): Service category slug
+
+Returns:
+  Count of available therapists matching the criteria. Use this to decide what to ask next.`,
+        inputSchema: CheckSchema,
+        annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+        },
+    }, async (params) => {
+        try {
+            const query = { per_page: 1, page: 1 };
+            if (params.city)
+                query["city"] = params.city;
+            if (params.online !== undefined)
+                query["online"] = params.online;
+            if (params.search_query)
+                query["search_query"] = params.search_query;
+            if (params.service)
+                query["service"] = params.service;
+            const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, query);
+            const total = raw.total ?? raw.count ?? (raw.data ?? raw.therapists ?? raw.results ?? []).length;
+            const filters = [];
+            if (params.city)
+                filters.push(`şehir: ${params.city}`);
+            if (params.online !== undefined)
+                filters.push(params.online ? "online" : "yüz yüze");
+            if (params.search_query)
+                filters.push(`arama: "${params.search_query}"`);
+            if (params.service)
+                filters.push(`hizmet: ${params.service}`);
+            const filterStr = filters.length ? filters.join(", ") : "filtre yok";
+            return {
+                content: [{
+                        type: "text",
+                        text: `Uygun terapist sayısı (${filterStr}): ${total}`,
+                    }],
+                structuredContent: { total, filters: params },
+            };
+        }
+        catch (error) {
+            return { content: [{ type: "text", text: handleApiError(error) }] };
+        }
+    });
 }
 //# sourceMappingURL=therapists.js.map

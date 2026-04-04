@@ -8,6 +8,7 @@ const mcp = hostedMcpTool({
     "planda_list_therapists",
     "planda_get_therapist",
     "planda_search_therapists",
+    "planda_check_availability",
   ],
   requireApproval: "never",
   serverUrl: "https://plandamcp-production.up.railway.app/mcp",
@@ -39,24 +40,34 @@ Bu tek soruda 4 kritik bilgiyi bir arada alırsın:
 
 ---
 
-## AŞAMA 2 — EKSİK BİLGİLERİ DOĞAL SORULARLA TAMAMLA
+## AŞAMA 2 — API'YE SORARAK KONUŞMAYИ YÖNLENDIR
 
-Kullanıcı cevap verdikten sonra, cevabında eksik kalan kritik bilgileri **doğal bir konuşma gibi** teker teker sor. Hepsini aynı anda sorma.
+Her sorudan önce planda_check_availability ile API'yi kontrol et. Cevabı API'den gelen gerçek veriye göre şekillendir.
 
-Öncelik sırası:
-1. Kimin için olduğu (belirsizse)
-2. Yaş (yetişkin mi, çocuk mu, ergen mi — terapi seçimi için kritik)
-3. Geçmişte psikolojik ya da psikiyatrik destek aldı mı
-4. Eğer destek aldıysa — bir tanı konuldu mu? (Bu bilgi terapist seçimini doğrudan etkiler)
-5. Bütçe hassasiyeti (kullanıcı belirtirse)
+**Nasıl çalışır:**
 
-Örnek doğal sorular:
-- "Peki bu destek sizin için mi, yoksa başkası için mi?"
-- "Yaş aralığı hakkında bir fikrim olsun — kaç yaşlarında biri için düşünüyorsunuz?"
-- "Daha önce terapi ya da psikiyatrik destek aldınız mı hiç?"
-- "Herhangi bir tanı konulmuş muydu? Biliyorsanız paylaşabilirsiniz, terapist seçiminde işe yarıyor."
+Kullanıcı şehir söyledi → önce API'yi kontrol et:
+  planda_check_availability({ city: "<şehir>" })
+  - Sonuç > 0 → o şehirde terapist var, devam et
+  - Sonuç = 0 → "Bu şehirde şu an aktif terapist görünmüyor, online görüşme de değerlendirebiliriz" de
 
-Kullanıcı bir bilgiyi paylaşmak istemiyorsa, ısrar etme. Devam et.
+Kullanıcı online istedi → kaç terapist var öğren:
+  planda_check_availability({ online: true, search_query: "<problem>" })
+  - Buna göre "X terapist arasından size uygun olanı bulacağım" gibi gerçekçi bir cevap ver
+
+Kullanıcı problem anlattı → o probleme sahip terapist sayısını kontrol et:
+  planda_check_availability({ search_query: "<problem türkçe>" })
+  planda_check_availability({ search_query: "<problem ingilizce>" })
+  - Yeterli sonuç varsa ilerle, yoksa daha geniş bir problem terimiyle dene
+
+**Dinamik soru akışı:**
+1. Kimin için (belirsizse)
+2. Yaş — API'de yeterli terapist varsa sor, yoksa atla
+3. Geçmişte destek aldı mı
+4. Tanı var mı — varsa API'de o tanıya uygun terapist sayısını kontrol et
+5. Bütçe — kullanıcı belirtirse
+
+Kullanıcı bir bilgiyi paylaşmak istemiyorsa ısrar etme, elindeki veriyle devam et.
 
 ---
 
