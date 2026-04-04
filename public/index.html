@@ -8,6 +8,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- Detect embed/webview mode BEFORE render to prevent header flash -->
+  <script>
+    (function () {
+      var p = new URLSearchParams(location.search);
+      if (p.get("planda_embed") === "1" || p.get("webview") === "1") {
+        document.documentElement.classList.add("embed");
+      }
+    })();
+  </script>
   <!-- Recoleta Alt via CDN fallback -->
   <style>
     @font-face {
@@ -334,6 +343,22 @@
     #chat::-webkit-scrollbar { width: 4px; }
     #chat::-webkit-scrollbar-track { background: transparent; }
     #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* ─── Embed / WebView mode ─── */
+    /* Hide header immediately (before JS runs) to prevent flash */
+    html.embed header { display: none !important; }
+
+    /* In embed mode the input bar is fixed so it always stays above the keyboard.
+       JS adjusts `bottom` via visualViewport to account for keyboard height. */
+    html.embed .input-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 100;
+      /* Remove bottom safe-area padding — keyboard position is handled by JS */
+      padding-bottom: 12px;
+    }
   </style>
 </head>
 <body>
@@ -449,41 +474,48 @@
 
   const history = [];
 
-  // Detect iOS WebView (WKWebView has no "Safari" in UA)
-  const isWebView =
-    new URLSearchParams(location.search).get("webview") === "1" ||
-    (/iPhone|iPad|iPod/i.test(navigator.userAgent) && !/Safari/i.test(navigator.userAgent)) ||
-    (window.navigator.standalone === false && /iPhone|iPad|iPod/i.test(navigator.userAgent));
+  // `html.embed` class was set by the inline <head> script — no re-detection needed.
+  const isEmbed = document.documentElement.classList.contains("embed");
+  const inputBar = document.querySelector(".input-bar");
+  const vp       = window.visualViewport;
 
-  if (isWebView) {
-    // App has its own nav bar — hide our header and don't add safe-area-top
-    document.querySelector("header")?.remove();
+  if (isEmbed) {
+    // ── Embed / WKWebView layout ─────────────────────────────────────────────
+    // Problem: in WKWebView `100vh` = full layout viewport (ignores app nav-bar
+    // and keyboard). We use visualViewport to get the *visible* area and keep
+    // the fixed input bar just above the keyboard.
 
-    // WKWebView: 100vh is unreliable — pin heights to the actual visible viewport
-    function fixHeights() {
-      const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-      const inputBar = document.querySelector(".input-bar");
-      document.body.style.height = vh + "px";
-      chatEl.style.height = (vh - inputBar.offsetHeight) + "px";
-      chatEl.style.flex = "none"; // override flex:1 so explicit height wins
+    function embedLayout() {
+      const vpH       = vp ? vp.height    : window.innerHeight;
+      const vpOffTop  = vp ? vp.offsetTop : 0;
+
+      // Body: shrink to exactly the visible area so overflow:hidden works right
+      document.body.style.height = vpH + "px";
+
+      // Input bar (position:fixed) sits at the bottom of the visual viewport.
+      // When keyboard is open: window.innerHeight - vpOffTop - vpH > 0
+      const fromBottom = Math.max(0, window.innerHeight - vpOffTop - vpH);
+      inputBar.style.bottom = fromBottom + "px";
+
+      // Chat: add bottom padding so the last message isn't behind the input bar
+      chatEl.style.paddingBottom = (inputBar.offsetHeight + 12) + "px";
+
+      chatEl.scrollTop = chatEl.scrollHeight;
     }
-    fixHeights();
 
-    // Re-run when keyboard appears/disappears or orientation changes
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", () => {
-        fixHeights();
-        chatEl.scrollTop = chatEl.scrollHeight;
-      });
+    embedLayout();
+    if (vp) {
+      vp.addEventListener("resize", embedLayout);
+      vp.addEventListener("scroll", embedLayout);
     }
-    window.addEventListener("resize", fixHeights);
+    window.addEventListener("resize", embedLayout);
 
   } else {
-    // Browser: add safe-area-top (notch support)
+    // ── Regular browser mode ─────────────────────────────────────────────────
     document.body.classList.add("has-safe-area");
   }
 
-  // iOS: focus input scrolls into view
+  // Scroll chat to bottom whenever input gains focus (soft-keyboard may shift view)
   inputEl.addEventListener("focus", () => {
     setTimeout(() => chatEl.scrollTop = chatEl.scrollHeight, 300);
   });
