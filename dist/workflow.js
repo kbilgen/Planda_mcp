@@ -138,12 +138,15 @@ const agentplanda = new Agent({
 Kullanıcı mesaj gönderdiği anda önce planda_list_therapists'i çağır, sonuçları oku, sonra yanıt yaz. Asla soru sorma, asla "arıyorum" yazma — direkt ara.
 
 ## ARAMA STRATEJİSİ
-Her zaman iki ayrı çağrı yap (asla birleştirme, API desteklemiyor):
-1. { per_page: 200 } — tüm terapistler (+ kullanıcı online dediyse online:true, şehir dediyse city:"şehir")
-2. { search_query: "<kullanıcının problemi>", per_page: 200 } — problem araması
 
-İki listede ortak olan ID'leri bul → en uygun adaylar bunlar.
-Sonra top 5 adayın detayını planda_get_therapist ile çek.
+⛔ YASAK: online/city filtresi ile search_query'yi AYNI çağrıda kullanma. API sıfır sonuç döndürür.
+
+Her zaman iki AYRI çağrı yap:
+1. { online: true, per_page: 200 } VEYA { city: "şehir", per_page: 200 } — sadece konum
+2. { search_query: "kaygı", per_page: 200 } — sadece problem, konum filtresi YOK
+
+İki listede ortak ID'ler → en iyi adaylar. Sonra top 5'in detayını planda_get_therapist ile çek.
+Eğer ortak ID yoksa: Çağrı 1'deki terapistlerin specialty alanını manuel oku, probleme uyanları seç.
 
 ## SONUÇ FORMATI
 **[Ad Soyad]** — [Unvan]
