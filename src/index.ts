@@ -86,13 +86,16 @@ async function runHttp(): Promise<void> {
 
   // ── Chat API — runs OpenAI Agents workflow ────────────────────────────────────
   app.post("/api/chat", async (req: Request, res: Response) => {
-    const { message } = req.body as { message: string };
+    const { message, history } = req.body as {
+      message: string;
+      history?: { role: "user" | "assistant"; content: string }[];
+    };
     if (!process.env.OPENAI_API_KEY) {
       res.status(500).json({ error: "OPENAI_API_KEY not set" });
       return;
     }
     try {
-      const result = await runWorkflow({ input_as_text: message });
+      const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
       const text = (result as { output_text?: string }).output_text ?? JSON.stringify(result);
       res.json({ response: text });
     } catch (err: unknown) {

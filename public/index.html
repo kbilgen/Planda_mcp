@@ -318,6 +318,9 @@
       .replace(/\n/g, "<br>");
   }
 
+  // Conversation history: [{role: "user"|"assistant", content: string}]
+  const history = [];
+
   async function send() {
     const msg = inputEl.value.trim();
     if (!msg) return;
@@ -330,21 +333,30 @@
     addMsg("user", renderMarkdown(msg));
     const typing = addTyping();
 
+    // Add user message to history before sending
+    history.push({ role: "user", content: msg });
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({ message: msg, history }),
       });
       const data = await res.json();
       typing.remove();
 
       if (data.error) {
         addMsg("bot", `<span style="color:#f87171">Hata: ${data.error}</span>`);
+        // Remove the last user message from history on error
+        history.pop();
       } else {
-        addMsg("bot", renderMarkdown(data.response || "Yanıt alınamadı."));
+        const reply = data.response || "Yanıt alınamadı.";
+        addMsg("bot", renderMarkdown(reply));
+        // Add assistant reply to history
+        history.push({ role: "assistant", content: reply });
       }
     } catch (e) {
+      history.pop();
       typing.remove();
       addMsg("bot", `<span style="color:#f87171">Bağlantı hatası. Lütfen tekrar deneyin.</span>`);
     }

@@ -70,13 +70,13 @@ async function runHttp() {
     app.use(express.static(join(__dirname, "../public")));
     // ── Chat API — runs OpenAI Agents workflow ────────────────────────────────────
     app.post("/api/chat", async (req, res) => {
-        const { message } = req.body;
+        const { message, history } = req.body;
         if (!process.env.OPENAI_API_KEY) {
             res.status(500).json({ error: "OPENAI_API_KEY not set" });
             return;
         }
         try {
-            const result = await runWorkflow({ input_as_text: message });
+            const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
             const text = result.output_text ?? JSON.stringify(result);
             res.json({ response: text });
         }

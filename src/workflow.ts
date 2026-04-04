@@ -132,13 +132,30 @@ Kullanıcı şunu hissetmeli:
 
 // ─── Workflow entry point ─────────────────────────────────────────────────────
 
-export type WorkflowInput = { input_as_text: string };
+export type WorkflowInput = {
+  input_as_text: string;
+  history?: { role: "user" | "assistant"; content: string }[];
+};
 
 export const runWorkflow = async (
   workflow: WorkflowInput
 ): Promise<{ output_text: string }> => {
   return await withTrace("Planda", async () => {
+    // Build full conversation history for the agent.
+    // Exclude the current user message from history (it's already in input_as_text).
+    const prior = (workflow.history ?? []).slice(0, -1);
     const conversationHistory: AgentInputItem[] = [
+      ...prior.map((m): AgentInputItem => {
+        if (m.role === "user") {
+          return { role: "user", content: m.content };
+        }
+        // assistant turn
+        return {
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: m.content }],
+        } as AgentInputItem;
+      }),
       {
         role: "user",
         content: [{ type: "input_text", text: workflow.input_as_text }],
