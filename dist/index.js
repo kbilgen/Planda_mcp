@@ -24,6 +24,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { registerTherapistTools } from "./tools/therapists.js";
@@ -62,12 +63,57 @@ async function runHttp() {
     // Handle OPTIONS preflight for all routes (Express 4 compatible)
     app.options("*", cors());
     app.use(express.json());
+    app.use(cookieParser());
     // ── Health check ──────────────────────────────────────────────────────────────
     app.get("/health", (_req, res) => {
         res.json({ status: "ok", server: "planda-mcp-server", version: "1.0.0" });
     });
     // ── Static UI files ───────────────────────────────────────────────────────────
     app.use(express.static(join(__dirname, "../public")));
+    // ── ChatKit session — exchanges workflow ID for a client secret ──────────────
+    app.post("/api/create-session", async (req, res) => {
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) {
+            res.status(500).json({ error: "OPENAI_API_KEY not set" });
+            return;
+        }
+        try {
+            const body = req.body;
+            const workflowId = body?.workflow?.id ?? process.env.VITE_CHATKIT_WORKFLOW_ID;
+            if (!workflowId) {
+                res.status(400).json({ error: "workflow.id is required" });
+                return;
+            }
+            // Get or create a stable user ID via cookie
+            let userId = req.cookies?.["chatkit_user_id"];
+            if (!userId) {
+                userId = crypto.randomUUID();
+                res.cookie("chatkit_user_id", userId, {
+                    maxAge: 30 * 24 * 60 * 60 * 1000,
+                    httpOnly: true,
+                    sameSite: "lax",
+                });
+            }
+            const apiBase = process.env.CHATKIT_API_BASE ?? "https://api.openai.com";
+            const upstream = await fetch(`${apiBase}/v1/beta/realtime/chatkit/sessions`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({ workflow: { id: workflowId }, user: { id: userId } }),
+            });
+            const data = (await upstream.json());
+            if (!upstream.ok) {
+                res.status(upstream.status).json({ error: data.error?.message ?? "Upstream error" });
+                return;
+            }
+            res.json(data);
+        }
+        catch (err) {
+            res.status(500).json({ error: String(err) });
+        }
+    });
     // ── Chat API — runs OpenAI Agents workflow ────────────────────────────────────
     app.post("/api/chat", async (req, res) => {
         const { message, history } = req.body;
