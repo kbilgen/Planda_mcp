@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Planda — Terapist Bul</title>
   <link rel="icon" href="https://www.planda.org/fav-icon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -39,27 +39,37 @@
       --radius:    15px;
     }
 
+    html, body {
+      height: 100%;
+    }
+
     body {
       background: var(--bg);
       color: var(--text);
       font-family: "Poppins", ui-sans-serif, system-ui, sans-serif;
       font-size: 16px;
       -webkit-font-smoothing: antialiased;
-      height: 100dvh;
+      /* iOS WebView: dvh unreliable, use fill-available */
+      height: 100vh;
+      height: -webkit-fill-available;
       display: flex;
       flex-direction: column;
       align-items: center;
+      overflow: hidden;
+      /* iOS safe area */
+      padding-top: env(safe-area-inset-top);
     }
 
     /* ─── Header ─── */
     header {
       width: 100%;
       max-width: 720px;
-      padding: 20px 24px 16px;
+      padding: 16px 24px;
       display: flex;
       align-items: center;
       gap: 12px;
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
     .logo img {
@@ -85,11 +95,13 @@
       width: 100%;
       max-width: 720px;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       padding: 28px 24px;
       display: flex;
       flex-direction: column;
       gap: 16px;
       scroll-behavior: smooth;
+      min-height: 0; /* critical for flex scroll on iOS */
     }
 
     /* ─── Welcome ─── */
@@ -259,9 +271,12 @@
     .input-bar {
       width: 100%;
       max-width: 720px;
-      padding: 12px 24px 24px;
+      padding: 12px 24px;
+      /* iOS safe area for home indicator */
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
       border-top: 1px solid var(--border);
       background: var(--bg);
+      flex-shrink: 0;
     }
 
     .input-wrap {
@@ -431,6 +446,24 @@
   }
 
   const history = [];
+
+  // Hide header when running inside iOS WebView (app adds ?webview=1)
+  if (new URLSearchParams(location.search).get("webview") === "1") {
+    document.querySelector("header")?.remove();
+    document.body.style.paddingTop = "0";
+  }
+
+  // iOS WebView: scroll to bottom when keyboard opens
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", () => {
+      chatEl.scrollTop = chatEl.scrollHeight;
+    });
+  }
+
+  // iOS: focus input scrolls into view
+  inputEl.addEventListener("focus", () => {
+    setTimeout(() => chatEl.scrollTop = chatEl.scrollHeight, 300);
+  });
 
   async function send() {
     const msg = inputEl.value.trim();
