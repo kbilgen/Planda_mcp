@@ -8,6 +8,19 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- Recoleta Alt via CDN fallback -->
+  <style>
+    @font-face {
+      font-family: 'Recoleta Alt';
+      src: url('https://www.planda.org/fonts/RecoletaAlt-Regular.woff2') format('woff2');
+      font-weight: 400; font-style: normal; font-display: swap;
+    }
+    @font-face {
+      font-family: 'Recoleta Alt';
+      src: url('https://www.planda.org/fonts/RecoletaAlt-SemiBold.woff2') format('woff2');
+      font-weight: 600; font-style: normal; font-display: swap;
+    }
+  </style>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -31,6 +44,7 @@
       color: var(--text);
       font-family: "Poppins", ui-sans-serif, system-ui, sans-serif;
       font-size: 16px;
+      -webkit-font-smoothing: antialiased;
       height: 100dvh;
       display: flex;
       flex-direction: column;
@@ -97,8 +111,8 @@
     }
 
     .welcome h2 {
-      font-family: "Poppins", sans-serif;
-      font-size: 22px;
+      font-family: "Recoleta Alt", "Poppins", sans-serif;
+      font-size: 26px;
       font-weight: 600;
       color: var(--text);
       margin-bottom: 10px;
@@ -108,7 +122,7 @@
       color: var(--muted);
       font-size: 15px;
       line-height: 1.7;
-      max-width: 380px;
+      max-width: 400px;
       margin: 0 auto;
     }
 
@@ -207,6 +221,7 @@
     /* Markdown inside bubble */
     .bubble strong { font-weight: 600; }
     .bubble h1, .bubble h2, .bubble h3 {
+      font-family: "Recoleta Alt", "Poppins", sans-serif;
       font-weight: 600;
       margin: 14px 0 4px;
       color: var(--primary-dark);
@@ -255,6 +270,7 @@
       background: #EFEFEF;
       border-radius: 14px;
       padding: 10px 10px 10px 16px;
+      align-items: flex-end;
     }
 
     textarea {
@@ -306,9 +322,9 @@
 <body>
 
 <header>
-  <div class="logo">
-    <img src="https://www.planda.org/logos/planda-black.svg" alt="Planda" />
-  </div>
+  <a href="https://planda.org" style="display:flex;align-items:center;">
+    <img src="https://www.planda.org/logos/planda-black.svg" alt="Planda" style="height:26px;" />
+  </a>
   <div class="header-divider"></div>
   <span class="header-label">Terapist Asistanı</span>
 </header>
