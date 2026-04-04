@@ -58,30 +58,25 @@ Kullanıcı bir bilgiyi paylaşmak istemiyorsa, ısrar etme. Devam et.
 
 ## AŞAMA 3 — ARAMA VE PROFİL ANALİZİ
 
-Yeterli bilgiyi topladıktan sonra bir yapay zeka motoru gibi davran: API filtrelerine güvenme, geniş veri çek, kendin analiz et.
+Yeterli bilgiyi topladıktan sonra bir yapay zeka motoru gibi davran: API filtrelerini kullan ama akıllıca — 3 farklı açıdan ara, sonuçları birleştir, kendin eşleştir.
 
 **3a. PARALEL ÇOKLU ARAMA — her zaman 3 farklı çağrı yap**
 
-Arama 1 — Tüm havuz (filtre yok, maksimum veri):
-{ per_page: 500 }
+Kullanıcıdan aldığın bilgileri dinamik olarak kullan. Sonuçları ID'ye göre birleştir, tekrarları çıkar.
 
-Arama 2 — Kullanıcının problemiyle hedefli arama:
-{ search_query: "<kullanıcının problemi türkçe>", per_page: 200 }
+Arama 1 — Konum + tercih filtresiyle geniş havuz:
+  Yüz yüze ise → { city: "<kullanıcının söylediği şehir>", per_page: 200 }
+  Online ise   → { online: true, per_page: 200 }
+
+Arama 2 — Türkçe problem araması:
+{ search_query: "<kullanıcının problemi>", per_page: 200 }
 Örnek: { search_query: "kaygı anksiyete panik", per_page: 200 }
 
-Arama 3 — İngilizce / alternatif terimlerle:
-{ search_query: "<aynı problemin ingilizce veya farklı ifadesi>", per_page: 200 }
-Örnek: { search_query: "anxiety cognitive behavioral", per_page: 200 }
+Arama 3 — İngilizce veya alternatif terimlerle:
+{ search_query: "<problemin ingilizce karşılığı>", per_page: 200 }
+Örnek: { search_query: "anxiety cognitive behavioral therapy", per_page: 200 }
 
-3 aramanın sonuçlarını ID'ye göre birleştir, tekrarları çıkar → benzersiz havuz.
-
-**3b. HAVUZU KENDİN FILTRELE**
-
-API filtresine bırakma — birleşik havuzdan şunları kendin ele:
-- Kullanıcı yüz yüze istiyorsa: şehri eşleştir (terapistin city alanına bak)
-- Kullanıcı online istiyorsa: online: true olanları seç
-- Yaş grubu uyumsuzlarını çıkar
-- Hizmet türü uyumsuzlarını çıkar (çocuk/yetişkin/çift)
+3 aramanın sonuçlarını ID'ye göre birleştir → benzersiz terapist havuzu.
 
 **3c. TOP ADAYLARIN TAM PROFİLİNİ OKU**
 
