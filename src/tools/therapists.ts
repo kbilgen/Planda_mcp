@@ -31,30 +31,32 @@ const PaginationSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(100)
-    .default(20)
-    .describe("Number of results per page (1–100, default 20)"),
+    .max(10000)
+    .default(50)
+    .describe("Number of results per page (1–10000, default 50). Use higher values like 200–500 to get a broad candidate pool for matching."),
 });
 
 const FilterSchema = z.object({
-  specialty: z
+  search_query: z
     .string()
     .optional()
-    .describe(
-      'Filter by specialty / area of expertise, e.g. "anxiety", "depression", "couples"'
-    ),
-  language: z
+    .describe('Free-text search across therapist names, bios, and specialties, e.g. "kaygı", "travma", "çift terapisi"'),
+  specialties: z
     .string()
     .optional()
-    .describe('Filter by language the therapist speaks, e.g. "Turkish", "English"'),
+    .describe('Filter by specialty slug(s). Comma-separated for multiple, e.g. "anxiety,depression" or "couples-therapy"'),
+  field: z
+    .string()
+    .optional()
+    .describe('Filter by field slug, e.g. "psychology", "psychiatry"'),
+  service: z
+    .string()
+    .optional()
+    .describe('Filter by service category slug, e.g. "individual-therapy", "couples-therapy", "child-therapy"'),
   city: z
     .string()
     .optional()
     .describe('Filter by city, e.g. "Istanbul", "Ankara"'),
-  country: z
-    .string()
-    .optional()
-    .describe('Filter by country code or name, e.g. "TR", "Turkey"'),
   online: z
     .boolean()
     .optional()
@@ -205,26 +207,23 @@ export function registerTherapistTools(server: McpServer): void {
       title: "List Planda Therapists",
       description: `Returns a paginated list of therapists from the Planda marketplace.
 
-Supports filtering by specialty, language, city, country, online availability, gender, and price range.
+Use this to get a broad candidate pool, then call planda_get_therapist on top candidates for deep profile analysis.
 
 Args:
   - page (number): Page number, starts at 1 (default: 1)
-  - per_page (number): Results per page, 1–100 (default: 20)
-  - specialty (string, optional): e.g. "anxiety", "depression", "couples therapy"
-  - language (string, optional): e.g. "Turkish", "English"
-  - city (string, optional): e.g. "Istanbul"
-  - country (string, optional): e.g. "TR"
+  - per_page (number): Results per page, 1–10000 (default: 50). Use 100–200 for broad matching.
+  - search_query (string, optional): Free-text search across names, bios, specialties
+  - specialties (string, optional): Specialty slug(s), comma-separated
+  - field (string, optional): Field slug, e.g. "psychology", "psychiatry"
+  - service (string, optional): Service category slug, e.g. "individual-therapy", "couples-therapy", "child-therapy"
+  - city (string, optional): e.g. "Istanbul", "Ankara"
   - online (boolean, optional): true for online-only, false for in-person only
   - gender (string, optional): e.g. "female", "male"
   - min_price / max_price (number, optional): Price range filter
   - response_format ("markdown" | "json"): Output format (default: "markdown")
 
 Returns:
-  List of therapists with name, specialty, language, location, pricing, rating, and bio.
-
-Examples:
-  - "List all female therapists in Istanbul" → specialty filter + city="Istanbul" + gender="female"
-  - "Find online English-speaking therapists" → online=true + language="English"`,
+  List of therapists with name, specialty, location, pricing, rating, and bio.`,
       inputSchema: ListInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -240,10 +239,11 @@ Examples:
           page: params.page,
           per_page: params.per_page,
         };
-        if (params.specialty) query["specialty"] = params.specialty;
-        if (params.language) query["language"] = params.language;
+        if (params.search_query) query["search_query"] = params.search_query;
+        if (params.specialties) query["specialties"] = params.specialties;
+        if (params.field) query["field"] = params.field;
+        if (params.service) query["service"] = params.service;
         if (params.city) query["city"] = params.city;
-        if (params.country) query["country"] = params.country;
         if (params.online !== undefined) query["online"] = params.online;
         if (params.gender) query["gender"] = params.gender;
         if (params.min_price !== undefined) query["min_price"] = params.min_price;
@@ -388,9 +388,9 @@ Error Handling:
         .number()
         .int()
         .min(1)
-        .max(100)
-        .default(20)
-        .describe("Results per page (1–100, default 20)"),
+        .max(10000)
+        .default(50)
+        .describe("Results per page (1–10000, default 50)"),
       response_format: z
         .nativeEnum(ResponseFormat)
         .default(ResponseFormat.MARKDOWN)
@@ -441,8 +441,7 @@ Error Handling:
           "GET",
           undefined,
           {
-            search: params.query,
-            q: params.query, // support both common query param names
+            search_query: params.query,
             page: params.page,
             per_page: params.per_page,
           }
