@@ -1,16 +1,461 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AgentKit demo</title>
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <script src="https://cdn.platform.openai.com/deployments/chatkit/chatkit.js"></script>
-    <script type="module" crossorigin src="/assets/index-Cc05TsRe.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BnvncEVO.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
-</html>
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Planda — Terapist Bul</title>
+  <link rel="icon" href="https://www.planda.org/fav-icon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --primary:   #9BB97E;
+      --primary-dark: #739552;
+      --bg:        #FFFFFF;
+      --surface:   #F7F9F5;
+      --surface2:  #EEF3EA;
+      --border:    #E4EBE0;
+      --text:      #11181C;
+      --muted:     #6B7280;
+      --user-bg:   #9BB97E;
+      --user-text: #FFFFFF;
+      --bot-bg:    #F7F9F5;
+      --radius:    15px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Poppins", ui-sans-serif, system-ui, sans-serif;
+      font-size: 16px;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* ─── Header ─── */
+    header {
+      width: 100%;
+      max-width: 720px;
+      padding: 20px 24px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo img {
+      height: 28px;
+      display: block;
+    }
+
+    .header-divider {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+    }
+
+    .header-label {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    /* ─── Chat area ─── */
+    #chat {
+      flex: 1;
+      width: 100%;
+      max-width: 720px;
+      overflow-y: auto;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      scroll-behavior: smooth;
+    }
+
+    /* ─── Welcome ─── */
+    .welcome {
+      margin: auto;
+      text-align: center;
+      padding: 40px 24px;
+    }
+
+    .welcome-icon {
+      width: 64px;
+      height: 64px;
+      background: var(--surface2);
+      border-radius: 20px;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 20px;
+      font-size: 28px;
+    }
+
+    .welcome h2 {
+      font-family: "Poppins", sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 10px;
+    }
+
+    .welcome p {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.7;
+      max-width: 380px;
+      margin: 0 auto;
+    }
+
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 24px;
+    }
+
+    .suggestion {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-family: "Poppins", sans-serif;
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .suggestion:hover {
+      border-color: var(--primary);
+      background: var(--surface2);
+    }
+
+    /* ─── Messages ─── */
+    .msg {
+      display: flex;
+      gap: 10px;
+      max-width: 100%;
+      animation: fadeIn 0.2s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    .msg.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+      align-self: flex-end;
+    }
+
+    .msg.user .avatar {
+      background: var(--primary);
+      color: white;
+      font-size: 13px;
+    }
+
+    .msg.bot .avatar {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .msg.bot .avatar img {
+      width: 20px;
+      height: 20px;
+      object-fit: contain;
+    }
+
+    .bubble {
+      max-width: 82%;
+      padding: 13px 17px;
+      border-radius: var(--radius);
+      font-size: 15px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .bubble {
+      background: var(--user-bg);
+      color: var(--user-text);
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.bot .bubble {
+      background: var(--bot-bg);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+      color: var(--text);
+    }
+
+    /* Markdown inside bubble */
+    .bubble strong { font-weight: 600; }
+    .bubble h1, .bubble h2, .bubble h3 {
+      font-weight: 600;
+      margin: 14px 0 4px;
+      color: var(--primary-dark);
+    }
+    .bubble h1 { font-size: 17px; }
+    .bubble h2 { font-size: 16px; }
+    .bubble h3 { font-size: 15px; }
+    .bubble ul, .bubble ol { padding-left: 20px; margin: 6px 0; }
+    .bubble li { margin: 4px 0; }
+    .bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+    .bubble a { color: var(--primary-dark); text-decoration: underline; }
+    .bubble code { background: var(--surface2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+    .msg.user .bubble strong { color: white; }
+    .msg.user .bubble a { color: rgba(255,255,255,0.9); }
+
+    /* Typing indicator */
+    .typing .bubble { padding: 14px 18px; }
+    .dots { display: flex; gap: 5px; align-items: center; }
+    .dots span {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--primary);
+      animation: bounce 1.2s infinite;
+      opacity: 0.5;
+    }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+      40%           { transform: translateY(-6px); opacity: 1; }
+    }
+
+    /* ─── Input bar ─── */
+    .input-bar {
+      width: 100%;
+      max-width: 720px;
+      padding: 12px 24px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    .input-wrap {
+      display: flex;
+      gap: 10px;
+      background: #EFEFEF;
+      border-radius: 14px;
+      padding: 10px 10px 10px 16px;
+    }
+
+    textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 15px;
+      font-family: "Poppins", sans-serif;
+      resize: none;
+      line-height: 1.5;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+
+    textarea::placeholder { color: var(--muted); }
+
+    button#send {
+      width: 38px; height: 38px;
+      background: var(--primary);
+      border: none;
+      border-radius: 9999px;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      transition: background 0.2s, opacity 0.2s;
+      align-self: flex-end;
+    }
+
+    button#send:hover { background: var(--primary-dark); }
+    button#send:disabled { opacity: 0.4; cursor: not-allowed; }
+    button#send svg { fill: white; }
+
+    .hint {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    /* Scrollbar */
+    #chat::-webkit-scrollbar { width: 4px; }
+    #chat::-webkit-scrollbar-track { background: transparent; }
+    #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <img src="https://www.planda.org/logos/planda-black.svg" alt="Planda" />
+  </div>
+  <div class="header-divider"></div>
+  <span class="header-label">Terapist Asistanı</span>
+</header>
+
+<div id="chat">
+  <div class="welcome" id="welcome">
+    <div class="welcome-icon">🌿</div>
+    <h2>Sana uygun terapisti bulalım</h2>
+    <p>Ne hissettğini ya da ne konuda destek almak istediğini yaz, sana en uygun terapistleri bulayım.</p>
+    <div class="suggestions">
+      <span class="suggestion">Kaygı için online terapist arıyorum</span>
+      <span class="suggestion">İstanbul'da çift terapisi</span>
+      <span class="suggestion">Depresyon uzmanı, bütçem 3000₺</span>
+      <span class="suggestion">Kadın terapist, travma</span>
+    </div>
+  </div>
+</div>
+
+<div class="input-bar">
+  <div class="input-wrap">
+    <textarea
+      id="input"
+      rows="1"
+      placeholder="Terapist arayın... (ör. 'kaygı için İstanbul'da terapist')"
+    ></textarea>
+    <button id="send" title="Gönder">
+      <svg width="16" height="16" viewBox="0 0 24 24">
+        <path d="M2 21l21-9L2 3v7l15 2-15 2z"/>
+      </svg>
+    </button>
+  </div>
+  <p class="hint">Enter ile gönder · Shift+Enter yeni satır</p>
+</div>
+
+<script>
+  const chatEl  = document.getElementById("chat");
+  const inputEl = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const welcome = document.getElementById("welcome");
+
+  inputEl.addEventListener("input", () => {
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + "px";
+  });
+
+  document.querySelectorAll(".suggestion").forEach(el => {
+    el.addEventListener("click", () => {
+      inputEl.value = el.textContent;
+      inputEl.dispatchEvent(new Event("input"));
+      send();
+    });
+  });
+
+  inputEl.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  sendBtn.addEventListener("click", send);
+
+  function addMsg(role, html) {
+    const avatarInner = role === "user"
+      ? "👤"
+      : `<img src="https://www.planda.org/fav-icon.svg" alt="Planda" />`;
+
+    const div = document.createElement("div");
+    div.className = `msg ${role}`;
+    div.innerHTML = `
+      <div class="avatar">${avatarInner}</div>
+      <div class="bubble">${html}</div>
+    `;
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return div;
+  }
+
+  function addTyping() {
+    const div = document.createElement("div");
+    div.className = "msg bot typing";
+    div.innerHTML = `
+      <div class="avatar"><img src="https://www.planda.org/fav-icon.svg" alt="Planda" /></div>
+      <div class="bubble"><div class="dots"><span></span><span></span><span></span></div></div>
+    `;
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return div;
+  }
+
+  function renderMarkdown(text) {
+    return text
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+      .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+      .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/`(.+?)`/g, "<code>$1</code>")
+      .replace(/^---$/gm, "<hr>")
+      .replace(/^\* (.+)$/gm, "<li>$1</li>")
+      .replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>")
+      .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank">$1</a>')
+      .replace(/→ (https?:\/\/\S+)/g, '→ <a href="$1" target="_blank">$1</a>')
+      // Orphan [text] without URL — strip the brackets, keep the text bold
+      .replace(/\[([^\]]+)\](?!\()/g, "<strong>$1</strong>")
+      .replace(/\n/g, "<br>");
+  }
+
+  const history = [];
+
+  async function send() {
+    const msg = inputEl.value.trim();
+    if (!msg) return;
+
+    welcome?.remove();
+    inputEl.value = "";
+    inputEl.style.height = "auto";
+    sendBtn.disabled = true;
+
+    addMsg("user", renderMarkdown(msg));
+    const typing = addTyping();
+
+    history.push({ role: "user", content: msg });
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg, history }),
+      });
+      const data = await res.json();
+      typing.remove();
+
+      if (data.error) {
+        addMsg("bot", `<span style="color:#dc2626">Hata: ${data.error}</span>`);
+        history.pop();
+      } else {
+        const reply = data.response || "Yanıt alınamadı.";
+        addMsg("bot", renderMarkdown(reply));
+        history.push({ role: "assistant", content: reply });
+      }
+    } catch (e) {
+      history.pop();
+      typing.remove();
+      addMsg("bot", `<span style="color:#dc2626">Bağlantı hatası. Lütfen tekrar deneyin.</span>`);
+    }
+
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+</script>
+</body>
+</html>
