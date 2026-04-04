@@ -49,14 +49,16 @@
       font-family: "Poppins", ui-sans-serif, system-ui, sans-serif;
       font-size: 16px;
       -webkit-font-smoothing: antialiased;
-      /* iOS WebView: dvh unreliable, use fill-available */
       height: 100vh;
       height: -webkit-fill-available;
       display: flex;
       flex-direction: column;
       align-items: center;
       overflow: hidden;
-      /* iOS safe area */
+    }
+
+    /* Only add safe-area padding when NOT in a WebView */
+    body.has-safe-area {
       padding-top: env(safe-area-inset-top);
     }
 
@@ -447,10 +449,18 @@
 
   const history = [];
 
-  // Hide header when running inside iOS WebView (app adds ?webview=1)
-  if (new URLSearchParams(location.search).get("webview") === "1") {
+  // Detect iOS WebView (WKWebView has no "Safari" in UA)
+  const isWebView =
+    new URLSearchParams(location.search).get("webview") === "1" ||
+    (/iPhone|iPad|iPod/i.test(navigator.userAgent) && !/Safari/i.test(navigator.userAgent)) ||
+    (window.navigator.standalone === false && /iPhone|iPad|iPod/i.test(navigator.userAgent));
+
+  if (isWebView) {
+    // App has its own nav bar — hide our header and don't add safe-area-top
     document.querySelector("header")?.remove();
-    document.body.style.paddingTop = "0";
+  } else {
+    // Browser: add safe-area-top (notch support)
+    document.body.classList.add("has-safe-area");
   }
 
   // iOS WebView: scroll to bottom when keyboard opens
