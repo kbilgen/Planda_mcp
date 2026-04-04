@@ -278,9 +278,6 @@ Yaşı sor (13 altı için platform uygun olmayabilir).
   model: "gpt-4.1-mini",
   tools: [mcp],
   modelSettings: {
-    reasoning: {
-      effort: "medium",
-    },
     store: true,
   },
 });
