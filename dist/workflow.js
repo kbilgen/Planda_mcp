@@ -138,7 +138,7 @@ Hiç eşleşme yoksa asla boş dönme:
 - Kullanıcı çocuğu için arıyorsa: 13 yaş altı için platform uygun olmayabilir, bunu belirt
 - Bütçesi düşük kullanıcıya pahalı terapist önerme
 - Kullanıcıyı acele ettirme — bu karar önemli`,
-    model: "gpt-4.1-mini",
+    model: "gpt-5-3",
     tools: [mcp],
     modelSettings: {
         temperature: 0.3,
