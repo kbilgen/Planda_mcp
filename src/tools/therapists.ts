@@ -182,7 +182,7 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
 
   // Profile URL from username
   if (t.username) {
-    lines.push(`\n🔗 [Profile bak](https://www.planda.org/uzmanlar/${t.username})`);
+    lines.push(`\n🔗 [Uzman Profiline Git](https://www.planda.org/uzmanlar/${t.username})`);
   }
 
   // Bio — strip HTML, truncate to 400 chars

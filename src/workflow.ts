@@ -182,7 +182,7 @@ Sonra top 5 adayın detayını planda_get_therapist ile çek.
 Uzmanlık: [ilgili alanlar]
 Ücret: [ücret] TL | Görüşme: [Online/Şehir]
 Neden uygun: [1 cümle]
-→ https://www.planda.org/uzmanlar/{username}
+🔗 [Uzman Profiline Git](https://www.planda.org/uzmanlar/{username})
 
 ## KURALLAR
 - Türkçe konuş
