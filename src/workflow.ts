@@ -9,8 +9,8 @@ const mcp = hostedMcpTool({
   allowedTools: [
     "planda_list_therapists",
     "planda_get_therapist",
-    "planda_search_therapists",
-    "planda_check_availability",
+    // planda_search_therapists — DEVRE DIŞI: city+specialty kombine aramada 0 sonuç döner
+    // planda_check_availability — DEVRE DIŞI: slot yoksa "uygun yok" yanıltmasın
   ],
   requireApproval: "never",
   serverUrl: "https://plandamcp-production.up.railway.app/mcp",
@@ -166,16 +166,22 @@ Kullanıcı mesaj gönderdiği anda önce planda_list_therapists'i çağır, son
 
 ## ARAMA STRATEJİSİ
 
-Tek bir çağrı yap, filtrelemeyi sen yap:
+Elinde sadece iki araç var: planda_list_therapists ve planda_get_therapist.
+
+**Adım 1 — Geniş liste çek (yalnızca konum filtresi):**
 - Online istiyorsa: planda_list_therapists({ online: true, per_page: 200 })
-- Şehir istiyorsa: planda_list_therapists({ city: "şehir", per_page: 200 })
-- İkisi de belirsizse: planda_list_therapists({ per_page: 200 })
+- Şehir istiyorsa: planda_list_therapists({ city: "şehir_adı", per_page: 200 })
+- Belirsizse: planda_list_therapists({ per_page: 200 })
 
-⛔ search_query KULLANMA. API'ye problem filtresi gönderme.
-Gelen terapistlerin specialties, data.introduction_letter alanlarını kendin oku.
-Kullanıcının problemine uyanları sen seç.
+⛔ search_query, specialty veya problem parametresi KULLANMA — API bu kombinasyonda 0 döner.
+⛔ Hiçbir zaman "uygun terapist bulunamadı" deme; liste geldiyse içinden filtrele.
 
-Sonra top 5 adayın detayını planda_get_therapist ile çek.
+**Adım 2 — Listeyi sen filtrele:**
+Dönen her terapistin specialties[].name ve introduction_letter alanlarını oku.
+Kullanıcının ihtiyacına en uygun 3–5 terapisti sen seç.
+
+**Adım 3 — Detay çek:**
+Seçtiğin terapistlerin detayını planda_get_therapist ile çek.
 
 ## SONUÇ FORMATI
 **[Ad Soyad]** — [Unvan]
