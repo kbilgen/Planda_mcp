@@ -83,41 +83,6 @@ async function runHttp(): Promise<void> {
     res.json({ status: "ok", server: "planda-mcp-server", version: "1.0.0" });
   });
 
-  // ── Debug: raw Planda API responses (remove after inspection) ────────────────
-  app.get("/api/debug/raw", async (_req: Request, res: Response) => {
-    try {
-      const { makeApiRequest } = await import("./services/apiClient.js");
-
-      // 1) List — first therapist
-      const list = await makeApiRequest<Record<string, unknown>>(
-        "marketplace/therapists", "GET", undefined, { per_page: 1, page: 1 }
-      );
-      const firstTherapist = (list.data as unknown[])?.[0] ?? null;
-      const firstId = (firstTherapist as Record<string, unknown>)?.id;
-
-      // 2) Search — kaygı, first result
-      const search = await makeApiRequest<Record<string, unknown>>(
-        "marketplace/therapists", "GET", undefined, { search_query: "kaygı", per_page: 1 }
-      );
-      const firstSearch = (search.data as unknown[])?.[0] ?? null;
-
-      // 3) Get therapist detail
-      const detail = firstId
-        ? await makeApiRequest<Record<string, unknown>>(`marketplace/therapists/${firstId}`)
-        : null;
-
-      res.json({
-        list_meta: list.meta,
-        list_first_therapist: firstTherapist,
-        search_meta: search.meta,
-        search_first_therapist: firstSearch,
-        get_therapist_detail: detail,
-      });
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
   // ── Static UI files ───────────────────────────────────────────────────────────
   app.use(express.static(join(__dirname, "../public")));
 

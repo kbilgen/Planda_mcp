@@ -171,14 +171,26 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
   }
   if (onlineBranch) lines.push(`**Online:** Evet`);
 
-  // Services / pricing
+  // Clinic / tenant
+  if (t.tenants?.length) {
+    lines.push(`**Klinik:** ${t.tenants[0].company_name ?? t.tenants[0].name}`);
+  }
+
+  // Services / pricing — fees are strings like "6500.00", parse to int
   if (t.services?.length) {
     const serviceLines = t.services.map((s) => {
-      const fee = s.custom_fee ?? s.fee;
-      return `${s.name}: ${fee ? fee + " TL" : "belirtilmemiş"} (${s.category?.name ?? ""})`;
+      const rawFee = s.custom_fee ?? s.fee;
+      const fee = rawFee ? Math.round(parseFloat(rawFee)) : null;
+      return `${s.name}: ${fee ? fee + " TL" : "belirtilmemiş"}`;
     });
-    lines.push(`**Hizmetler:** ${serviceLines.join(" | ")}`);
+    lines.push(`**Ücret:** ${serviceLines.join(" | ")}`);
   }
+
+  // Therapy approaches (only on detail/get calls)
+  const approaches = Array.isArray(t.approaches)
+    ? t.approaches.map((a) => a.name).filter(Boolean)
+    : [];
+  if (approaches.length) lines.push(`**Terapi Yaklaşımı:** ${approaches.join(", ")}`);
 
   // Profile URL from username
   if (t.username) {

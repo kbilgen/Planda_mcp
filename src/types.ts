@@ -79,6 +79,23 @@ export interface Specialty {
   name: string;
 }
 
+export interface Approach {
+  id: number;
+  name: string;
+}
+
+export interface Tenant {
+  id: number;
+  name: string;
+  slug: string;
+  company_name: string;
+  email?: string;
+  phone_number?: string;
+  logo?: string;
+  thumbnail?: string;
+  therapists_count?: number;
+}
+
 /** A single therapist entry returned by the Planda marketplace API */
 export interface Therapist {
   id: number;
@@ -92,6 +109,10 @@ export interface Therapist {
   branches?: Branch[];
   services?: Service[];
   specialties?: Specialty[];
+  /** Therapy approaches — only present in planda_get_therapist detail response */
+  approaches?: Approach[];
+  /** Clinic/practice — only present in planda_get_therapist detail response */
+  tenants?: Tenant[];
   campaigns?: unknown[];
   [key: string]: unknown;
 }
