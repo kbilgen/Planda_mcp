@@ -34,46 +34,25 @@ const PaginationSchema = z.object({
     .min(1)
     .max(10000)
     .default(50)
-    .describe("Number of results per page (1–10000, default 50). Use higher values like 200–500 to get a broad candidate pool for matching."),
+    .describe("Results per page (1–10000, default 50). Use 100 to fetch all therapists in one call (~59 total)."),
 });
 
+// Only confirmed-working filter params.
+// search_query / specialties / field / service / gender / min_price / max_price
+// are NOT included — behaviour unconfirmed or known-broken (returns 0).
 const FilterSchema = z.object({
-  search_query: z
-    .string()
-    .optional()
-    .describe('Free-text search across therapist names, bios, and specialties, e.g. "kaygı", "travma", "çift terapisi"'),
-  specialties: z
-    .string()
-    .optional()
-    .describe('Filter by specialty slug(s). Comma-separated for multiple, e.g. "anxiety,depression" or "couples-therapy"'),
-  field: z
-    .string()
-    .optional()
-    .describe('Filter by field slug, e.g. "psychology", "psychiatry"'),
-  service: z
-    .string()
-    .optional()
-    .describe('Filter by service category slug, e.g. "individual-therapy", "couples-therapy", "child-therapy"'),
   city: z
     .string()
     .optional()
-    .describe('Filter by city, e.g. "Istanbul", "Ankara"'),
+    .describe('Filter by city name, e.g. "İstanbul", "Ankara"'),
   online: z
     .boolean()
     .optional()
-    .describe("true → online-only sessions; false → in-person only; omit for both"),
-  gender: z
+    .describe("true → online-only; false → in-person only; omit for both"),
+  order_by: z
     .string()
     .optional()
-    .describe('Filter by therapist gender, e.g. "female", "male"'),
-  min_price: z
-    .number()
-    .optional()
-    .describe("Minimum session price (inclusive)"),
-  max_price: z
-    .number()
-    .optional()
-    .describe("Maximum session price (inclusive)"),
+    .describe('Order results by field, e.g. "name"'),
 });
 
 const FormatSchema = z.object({
@@ -248,23 +227,20 @@ export function registerTherapistTools(server: McpServer): void {
       title: "List Planda Therapists",
       description: `Returns a paginated list of therapists from the Planda marketplace.
 
-Use this to get a broad candidate pool, then call planda_get_therapist on top candidates for deep profile analysis.
+Workflow:
+  1. Call planda_list_specialties to get specialty IDs matching the user's need.
+  2. Call this tool with city/online filter to fetch a broad list (~59 total; use per_page:100).
+  3. Filter results by specialties[].id or specialties[].name on the AI side.
+  4. Call planda_get_therapist for top 3–5 candidates to get approaches[] and tenants[].
 
-Args:
-  - page (number): Page number, starts at 1 (default: 1)
-  - per_page (number): Results per page, 1–10000 (default: 50). Use 100–200 for broad matching.
-  - search_query (string, optional): Free-text search across names, bios, specialties
-  - specialties (string, optional): Specialty slug(s), comma-separated
-  - field (string, optional): Field slug, e.g. "psychology", "psychiatry"
-  - service (string, optional): Service category slug, e.g. "individual-therapy", "couples-therapy", "child-therapy"
-  - city (string, optional): e.g. "Istanbul", "Ankara"
-  - online (boolean, optional): true for online-only, false for in-person only
-  - gender (string, optional): e.g. "female", "male"
-  - min_price / max_price (number, optional): Price range filter
-  - response_format ("markdown" | "json"): Output format (default: "markdown")
+Confirmed filter params (others are unverified and excluded):
+  - city (string): e.g. "İstanbul", "Ankara"
+  - online (boolean): true = online-only, false = in-person only
+  - order_by (string): e.g. "name"
+  - page / per_page: pagination
 
 Returns:
-  List of therapists with name, specialty, location, pricing, rating, and bio.`,
+  List with name, specialties, location, pricing, and bio.`,
       inputSchema: ListInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -280,15 +256,9 @@ Returns:
           page: params.page,
           per_page: params.per_page,
         };
-        if (params.search_query) query["search_query"] = params.search_query;
-        if (params.specialties) query["specialties"] = params.specialties;
-        if (params.field) query["field"] = params.field;
-        if (params.service) query["service"] = params.service;
         if (params.city) query["city"] = params.city;
         if (params.online !== undefined) query["online"] = params.online;
-        if (params.gender) query["gender"] = params.gender;
-        if (params.min_price !== undefined) query["min_price"] = params.min_price;
-        if (params.max_price !== undefined) query["max_price"] = params.max_price;
+        if (params.order_by) query["order_by"] = params.order_by;
 
         const raw = await makeApiRequest<TherapistListResponse>(
           "marketplace/therapists",
@@ -414,60 +384,22 @@ Error Handling:
     }
   );
 
-  // ── 3. planda_search_therapists ─────────────────────────────────────────────
-  const SearchInputSchema = z
-    .object({
-      query: z
-        .string()
-        .min(2, "Arama terimi en az 2 karakter olmalıdır")
-        .max(200, "Arama terimi en fazla 200 karakter olabilir")
-        .describe(
-          'Free-text search query, e.g. "kaygı tedavisi", "bilişsel davranışçı terapi", "çift terapisi Istanbul"'
-        ),
-      page: z.number().int().min(1).default(1).describe("Page number (starts at 1)"),
-      per_page: z
-        .number()
-        .int()
-        .min(1)
-        .max(10000)
-        .default(50)
-        .describe("Results per page (1–10000, default 50)"),
-      response_format: z
-        .nativeEnum(ResponseFormat)
-        .default(ResponseFormat.MARKDOWN)
-        .describe(
-          'Output format: "markdown" for human-readable, "json" for structured data'
-        ),
-    })
-    .strict();
-
-  type SearchInput = z.infer<typeof SearchInputSchema>;
-
+  // ── 3. planda_list_specialties ──────────────────────────────────────────────
   server.registerTool(
-    "planda_search_therapists",
+    "planda_list_specialties",
     {
-      title: "Search Planda Therapists",
-      description: `Performs a free-text search across therapist profiles in the Planda marketplace.
+      title: "List Planda Specialties",
+      description: `Returns all therapy specialty areas available on the Planda marketplace.
 
-Use this tool for natural-language queries that don't map to a single filter field, such as "therapists who specialise in trauma and work with adolescents".
-
-Args:
-  - query (string, min 2 chars): Search term(s) to match against therapist names, bios, and specialties
-  - page (number): Page number, starts at 1 (default: 1)
-  - per_page (number): Results per page, 1–10000 (default: 50)
-  - response_format ("markdown" | "json"): Output format (default: "markdown")
+Call this FIRST before planda_list_therapists to identify the specialty IDs that match
+the user's stated problem. Then filter therapists by specialties[].id on the AI side.
 
 Returns:
-  Ranked list of therapists matching the query, with name, specialty, location, pricing, and rating.
+  Array of { id: number, name: string } — full specialty catalogue in Turkish.
 
-Examples:
-  - "Find therapists for trauma and PTSD" → query="trauma PTSD"
-  - "Search for cognitive behavioural therapists in Ankara" → query="cognitive behavioural Ankara"
-  - "Kaygı bozukluğu uzmanı terapist ara" → query="kaygı bozukluğu"
-
-Error Handling:
-  - Returns empty list message when no therapists match the query`,
-      inputSchema: SearchInputSchema,
+Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
+  "İlişkisel Problemler", "Çift ve Aile Terapisi", "EMDR"`,
+      inputSchema: z.object({}).strict(),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -475,136 +407,29 @@ Error Handling:
         openWorldHint: true,
       },
     },
-    async (params: SearchInput) => {
+    async () => {
       try {
-        const raw = await makeApiRequest<TherapistListResponse>(
-          "marketplace/therapists",
-          "GET",
-          undefined,
-          {
-            search_query: params.query,
-            page: params.page,
-            per_page: params.per_page,
-          }
-        );
+        const raw = await makeApiRequest<unknown>("marketplace/specialties");
 
-        let output = normaliseListResponse(raw, params.page, params.per_page);
-        output = applyCharacterLimit(output);
+        // API may return array directly or wrapped in { data: [...] }
+        const specialties: unknown[] = Array.isArray(raw)
+          ? raw
+          : Array.isArray((raw as { data?: unknown[] }).data)
+          ? (raw as { data: unknown[] }).data
+          : [];
 
-        if (!output.therapists.length) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `"${params.query}" araması için sonuç bulunamadı. Farklı anahtar kelimeler deneyin.`,
-              },
-            ],
-          };
-        }
-
-        let text: string;
-        if (params.response_format === ResponseFormat.JSON) {
-          text = JSON.stringify(output, null, 2);
-        } else {
-          const lines = [
-            `# "${params.query}" Arama Sonuçları`,
-            "",
-            `**Toplam:** ${output.total} terapist | **Sayfa:** ${output.page} | **Gösterilen:** ${output.count}`,
-            output.truncated ? `\n⚠️ ${output.truncation_message}` : "",
-            "",
-          ];
-          output.therapists.forEach((t, i) => {
-            lines.push(therapistToMarkdown(t, i));
-          });
-          if (output.has_more) {
-            lines.push(
-              `---\n*Daha fazla sonuç için \`page: ${output.next_page}\` parametresini kullanın.*`
-            );
-          }
-          text = lines.filter((l) => l !== undefined).join("\n");
-        }
+        const text = specialties.length
+          ? specialties
+              .map((s) => {
+                const sp = s as { id: number; name: string };
+                return `- ID ${sp.id}: ${sp.name}`;
+              })
+              .join("\n")
+          : "Uzmanlık alanı listesi alınamadı.";
 
         return {
-          content: [{ type: "text", text }],
-          structuredContent: output,
-        };
-      } catch (error) {
-        return { content: [{ type: "text", text: handleApiError(error) }] };
-      }
-    }
-  );
-
-  // ── 4. planda_check_availability ────────────────────────────────────────────
-  // Used to dynamically validate options before asking the user follow-up questions.
-  const CheckSchema = z
-    .object({
-      city: z.string().optional().describe("City to check therapist availability for"),
-      online: z.boolean().optional().describe("Check online therapist count"),
-      search_query: z.string().optional().describe("Problem/specialty term to check"),
-      service: z.string().optional().describe("Service category slug"),
-    })
-    .strict();
-
-  type CheckInput = z.infer<typeof CheckSchema>;
-
-  server.registerTool(
-    "planda_check_availability",
-    {
-      title: "Check Therapist Availability",
-      description: `Quickly checks how many therapists are available for given criteria WITHOUT returning full profiles.
-
-Use this BEFORE asking the user follow-up questions, to validate options and shape the conversation:
-- Check if a city has therapists before asking for city preference
-- Check if online therapists exist for a problem before suggesting online option
-- Check counts for different cities to guide the user toward better options
-
-Args:
-  - city (string, optional): City name to check
-  - online (boolean, optional): Check online availability
-  - search_query (string, optional): Problem or specialty term
-  - service (string, optional): Service category slug
-
-Returns:
-  Count of available therapists matching the criteria. Use this to decide what to ask next.`,
-      inputSchema: CheckSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async (params: CheckInput) => {
-      try {
-        const query: Record<string, unknown> = { per_page: 1, page: 1 };
-        if (params.city) query["city"] = params.city;
-        if (params.online !== undefined) query["online"] = params.online;
-        if (params.search_query) query["search_query"] = params.search_query;
-        if (params.service) query["service"] = params.service;
-
-        const raw = await makeApiRequest<TherapistListResponse>(
-          "marketplace/therapists",
-          "GET",
-          undefined,
-          query
-        );
-
-        const total = raw.meta?.total ?? raw.total ?? raw.count ?? (raw.data ?? raw.therapists ?? raw.results ?? []).length;
-
-        const filters: string[] = [];
-        if (params.city) filters.push(`şehir: ${params.city}`);
-        if (params.online !== undefined) filters.push(params.online ? "online" : "yüz yüze");
-        if (params.search_query) filters.push(`arama: "${params.search_query}"`);
-        if (params.service) filters.push(`hizmet: ${params.service}`);
-
-        const filterStr = filters.length ? filters.join(", ") : "filtre yok";
-
-        return {
-          content: [{
-            type: "text",
-            text: `Uygun terapist sayısı (${filterStr}): ${total}`,
-          }],
-          structuredContent: { total, filters: params },
+          content: [{ type: "text", text: `# Planda Uzmanlık Alanları\n\n${text}` }],
+          structuredContent: { specialties },
         };
       } catch (error) {
         return { content: [{ type: "text", text: handleApiError(error) }] };

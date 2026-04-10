@@ -7,10 +7,9 @@ import { runGuardrails } from "@openai/guardrails";
 const mcp = hostedMcpTool({
   serverLabel: "Kaan_mcp",
   allowedTools: [
+    "planda_list_specialties",
     "planda_list_therapists",
     "planda_get_therapist",
-    // planda_search_therapists — DEVRE DIŞI: city+specialty kombine aramada 0 sonuç döner
-    // planda_check_availability — DEVRE DIŞI: slot yoksa "uygun yok" yanıltmasın
   ],
   requireApproval: "never",
   serverUrl: "https://plandamcp-production.up.railway.app/mcp",
@@ -165,31 +164,32 @@ const agentplanda = new Agent({
 Kullanıcı mesaj gönderdiği anda direkt ara, sonuçları oku, yanıt yaz.
 Asla soru sorma, asla "arıyorum" yazma.
 
-## API BİLGİSİ
-- Toplam ~59 terapist var. per_page: 100 ile hepsini tek çağrıda alırsın.
-- search_query parametresi API'de çalışmıyor — HİÇ KULLANMA.
-- Uzmanlık isimleri Türkçe ve verbose: "Kaygı(Anksiyete) ve Korku", "İlişkisel Problemler" vb.
-- Terapi yaklaşımları (EMDR, BDT, Gestalt vb.) sadece planda_get_therapist'te gelir.
+## ARAÇLAR
+- planda_list_specialties → tüm uzmanlık alanlarını ID+isimle döndürür
+- planda_list_therapists  → konum filtresiyle terapist listesi (city / online)
+- planda_get_therapist    → tek terapistin tam profili (approaches, tenants dahil)
 
 ## ARAMA STRATEJİSİ
 
-**Adım 1 — Geniş liste çek (sadece konum filtresi):**
+**Adım 1 — Uzmanlık ID'lerini bul:**
+planda_list_specialties() çağır.
+Dönen listeden kullanıcının sorununa uyan specialty ID'lerini not et.
+Örnek: "kaygı" → ID 26 "Kaygı(Anksiyete) ve Korku"
+
+**Adım 2 — Geniş liste çek (sadece konum filtresi):**
 - Online: planda_list_therapists({ online: true, per_page: 100 })
 - Şehir: planda_list_therapists({ city: "İstanbul", per_page: 100 })
 - Belirsiz: planda_list_therapists({ per_page: 100 })
 
-⛔ search_query, specialty, problem parametresi gönderme — 0 sonuç döner.
-⛔ Sonuç 0 dönse bile "bulunamadı" deme — filtresiz yeniden dene.
+⛔ SADECE city ve online parametresi kullan. Başka parametre gönderme.
+⛔ "Bulunamadı" deme — filtresiz yeniden dene.
 
-**Adım 2 — Listeyi sen filtrele:**
-Her terapistin şu alanlarını oku:
-- specialties[].name → uzmanlık alanları (Türkçe, tam isimle)
-- data.introduction_letter → bio metni (HTML içerir, içindeki kelimelere bak)
-Kullanıcının sorunuyla eşleşen 3–5 aday seç.
+**Adım 3 — Adayları sen filtrele:**
+Her terapistin specialties[].id alanını Adım 1'deki ID'lerle karşılaştır.
+Eşleşen 3–5 adayı seç.
 
-**Adım 3 — Detay çek:**
-Adayların tam profilini planda_get_therapist ile çek.
-Bu çağrıda approaches[].name (terapi yaklaşımı) ve tenants[0] (klinik) da gelir.
+**Adım 4 — Detay çek:**
+planda_get_therapist ile tam profili al → approaches[].name ve tenants[0] gelir.
 
 ## SONUÇ FORMATI
 **[Ad Soyad]** — [Unvan]
