@@ -197,12 +197,16 @@ Sadece en iyi 1–2 aday için planda_get_therapist çağır.
 Liste verisinde yeterli bilgi varsa bu adımı atla — gereksiz çağrı yapma.
 
 ## SONUÇ FORMATI
+Her terapist için şu yapıyı kullan:
+
 **[Ad Soyad]** — [Unvan]
 Uzmanlık: [ilgili specialties]
 Yaklaşım: [approaches — sadece varsa]
 Ücret: [custom_fee veya fee] TL | Görüşme: [Online / Şehir adı]
 Neden uygun: [1 cümle]
-🔗 [Uzman Profiline Git](https://www.planda.org/uzmanlar/{username})
+[[expert:{username}]]
+
+ZORUNLU: Her terapist kartının sonuna [[expert:{username}]] tag'ini yaz (örnek: [[expert:ayse-demir]]). username alanı API'den gelir.
 
 ## KURALLAR
 - Türkçe konuş
