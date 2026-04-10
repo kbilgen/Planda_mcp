@@ -116,11 +116,20 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
     : [];
   if (specialties.length) lines.push(`**Uzmanlık:** ${specialties.join(", ")}`);
 
-  // Education from nested universities
+  // Education from nested universities + departments
   const edu: string[] = [];
-  if (t.data?.undergraduateUniversity?.name) edu.push(`Lisans: ${t.data.undergraduateUniversity.name}`);
-  if (t.data?.postgraduateUniversity?.name) edu.push(`Y.Lisans: ${t.data.postgraduateUniversity.name}`);
-  if (t.data?.doctorateUniversity?.name) edu.push(`Doktora: ${t.data.doctorateUniversity.name}`);
+  if (t.data?.undergraduateUniversity?.name) {
+    const dept = t.data.undergraduateDepartment?.name ? ` — ${t.data.undergraduateDepartment.name}` : "";
+    edu.push(`Lisans: ${t.data.undergraduateUniversity.name}${dept}`);
+  }
+  if (t.data?.postgraduateUniversity?.name) {
+    const dept = t.data.postgraduateDepartment?.name ? ` — ${t.data.postgraduateDepartment.name}` : "";
+    edu.push(`Y.Lisans: ${t.data.postgraduateUniversity.name}${dept}`);
+  }
+  if (t.data?.doctorateUniversity?.name) {
+    const dept = t.data.doctorateDepartment?.name ? ` — ${t.data.doctorateDepartment.name}` : "";
+    edu.push(`Doktora: ${t.data.doctorateUniversity.name}${dept}`);
+  }
   if (edu.length) lines.push(`**Eğitim:** ${edu.join(" | ")}`);
 
   // Age range
