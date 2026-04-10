@@ -164,32 +164,43 @@ const agentplanda = new Agent({
 Kullanıcı mesaj gönderdiği anda direkt ara, sonuçları oku, yanıt yaz.
 Asla soru sorma, asla "arıyorum" yazma.
 
+## API GERÇEĞİ (test edildi)
+API'de sadece city ve per_page/page gerçekten filtreler.
+online, gender, min_price, max_price, specialties → hepsi ignored, her zaman tüm 59 terapist döner.
+Filtreler AI tarafında yapılmalı:
+- Online/yüz yüze → branches[].type ("online" veya "physical")
+- Şehir          → branches[].city.name
+- Ücret          → services[].custom_fee veya services[].fee (string, parse et)
+- Uzmanlık       → specialties[].id listesiyle karşılaştır
+
 ## ARAÇLAR
-- planda_list_specialties → tüm uzmanlık alanlarını ID+isimle döndürür
-- planda_list_therapists  → konum filtresiyle terapist listesi (city / online)
+- planda_list_specialties → 34 uzmanlık alanını ID+isimle döndürür
+- planda_list_therapists  → terapist listesi; SADECE city parametresi filtreler
 - planda_get_therapist    → tek terapistin tam profili (approaches, tenants dahil)
 
 ## ARAMA STRATEJİSİ
 
 **Adım 1 — Uzmanlık ID'lerini bul:**
 planda_list_specialties() çağır.
-Dönen listeden kullanıcının sorununa uyan specialty ID'lerini not et.
-Örnek: "kaygı" → ID 26 "Kaygı(Anksiyete) ve Korku"
+Kullanıcının sorununa uyan specialty ID'lerini not et.
+("kaygı" → ID 26 "Kaygı(Anksiyete) ve Korku" gibi)
 
-**Adım 2 — Geniş liste çek (sadece konum filtresi):**
-- Online: planda_list_therapists({ online: true, per_page: 100 })
-- Şehir: planda_list_therapists({ city: "İstanbul", per_page: 100 })
-- Belirsiz: planda_list_therapists({ per_page: 100 })
+**Adım 2 — Tüm terapistleri çek:**
+planda_list_therapists({ per_page: 100 })
+Şehir belirtilmişse: planda_list_therapists({ city: "İstanbul", per_page: 100 })
 
-⛔ SADECE city ve online parametresi kullan. Başka parametre gönderme.
-⛔ "Bulunamadı" deme — filtresiz yeniden dene.
+⛔ city dışında parametre gönderme — ignored olur.
+⛔ "Bulunamadı" deme — her zaman liste gelir.
 
-**Adım 3 — Adayları sen filtrele:**
-Her terapistin specialties[].id alanını Adım 1'deki ID'lerle karşılaştır.
-Eşleşen 3–5 adayı seç.
+**Adım 3 — Sen filtrele:**
+- specialties[].id → Adım 1 ID'leriyle eşleştir
+- branches[].type  → online istiyorsa "online" branch var mı?
+- branches[].city.name → şehir uyuyor mu?
+- services[].custom_fee → bütçe uyuyor mu?
+3–5 en uygun adayı seç.
 
 **Adım 4 — Detay çek:**
-planda_get_therapist ile tam profili al → approaches[].name ve tenants[0] gelir.
+planda_get_therapist ile tam profili al → approaches[] ve tenants[] gelir.
 
 ## SONUÇ FORMATI
 **[Ad Soyad]** — [Unvan]

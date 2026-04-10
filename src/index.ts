@@ -83,56 +83,6 @@ async function runHttp(): Promise<void> {
     res.json({ status: "ok", server: "planda-mcp-server", version: "1.0.0" });
   });
 
-  // ── Debug: answer open API questions (remove after confirmed) ────────────────
-  // Hit: GET /api/debug/params
-  app.get("/api/debug/params", async (_req: Request, res: Response) => {
-    const { makeApiRequest } = await import("./services/apiClient.js");
-    const base = "marketplace/therapists";
-
-    async function probe(label: string, params: Record<string, unknown>) {
-      try {
-        const r = await makeApiRequest<{ meta?: { total?: number }; data?: unknown[] }>(
-          base, "GET", undefined, { per_page: 1, page: 1, ...params }
-        );
-        return { label, params, total: r.meta?.total ?? (r.data ?? []).length, ok: true };
-      } catch (e) {
-        return { label, params, error: String(e), ok: false };
-      }
-    }
-
-    async function probeEndpoint(label: string, endpoint: string) {
-      try {
-        const r = await makeApiRequest<unknown>(endpoint);
-        const arr = Array.isArray(r) ? r : (r as { data?: unknown[] }).data ?? [];
-        return { label, endpoint, count: arr.length, sample: arr.slice(0, 3), ok: true };
-      } catch (e) {
-        return { label, endpoint, error: String(e), ok: false };
-      }
-    }
-
-    try {
-      const results = await Promise.all([
-        // Q1: does online=true filter work?
-        probe("online=true", { online: true }),
-        probe("online=false", { online: false }),
-        // Q2: gender filter
-        probe("gender=female", { gender: "female" }),
-        probe("gender=erkek", { gender: "erkek" }),
-        // Q3: price filter
-        probe("min_price=1000&max_price=5000", { min_price: 1000, max_price: 5000 }),
-        // Q4: specialties as ID
-        probe("specialties=26 (int ID)", { specialties: 26 }),
-        probe("specialties[]=26 (array)", { "specialties[]": 26 }),
-        probe("specialties=26 (string)", { specialties: "26" }),
-        // New endpoint
-        probeEndpoint("GET /marketplace/specialties", "marketplace/specialties"),
-      ]);
-      res.json(results);
-    } catch (e) {
-      res.status(500).json({ error: String(e) });
-    }
-  });
-
   // ── Static UI files ───────────────────────────────────────────────────────────
   app.use(express.static(join(__dirname, "../public")));
 

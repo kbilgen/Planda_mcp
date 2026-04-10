@@ -37,22 +37,14 @@ const PaginationSchema = z.object({
     .describe("Results per page (1–10000, default 50). Use 100 to fetch all therapists in one call (~59 total)."),
 });
 
-// Only confirmed-working filter params.
-// search_query / specialties / field / service / gender / min_price / max_price
-// are NOT included — behaviour unconfirmed or known-broken (returns 0).
+// Only confirmed-working filter params (tested via /api/debug/params):
+// - city: confirmed working
+// - online, gender, min_price, max_price, specialties, order_by: ALL ignored by API (return full 59)
 const FilterSchema = z.object({
   city: z
     .string()
     .optional()
-    .describe('Filter by city name, e.g. "İstanbul", "Ankara"'),
-  online: z
-    .boolean()
-    .optional()
-    .describe("true → online-only; false → in-person only; omit for both"),
-  order_by: z
-    .string()
-    .optional()
-    .describe('Order results by field, e.g. "name"'),
+    .describe('Filter by city name, e.g. "İstanbul", "Ankara". Only confirmed working filter.'),
 });
 
 const FormatSchema = z.object({
@@ -233,11 +225,17 @@ Workflow:
   3. Filter results by specialties[].id or specialties[].name on the AI side.
   4. Call planda_get_therapist for top 3–5 candidates to get approaches[] and tenants[].
 
-Confirmed filter params (others are unverified and excluded):
+Confirmed working filter params (all others are silently ignored by the API):
   - city (string): e.g. "İstanbul", "Ankara"
-  - online (boolean): true = online-only, false = in-person only
-  - order_by (string): e.g. "name"
-  - page / per_page: pagination
+  - page / per_page: pagination (use per_page:100 to fetch all ~59 in one call)
+
+NOT WORKING (tested, return full 59 results regardless):
+  online, gender, min_price, max_price, specialties, order_by
+  → Filter these on the AI side after fetching.
+  → For online: check branches[].type === "online"
+  → For city: check branches[].city.name
+  → For price: check services[].custom_fee or services[].fee
+  → For specialty: use IDs from planda_list_specialties, match specialties[].id
 
 Returns:
   List with name, specialties, location, pricing, and bio.`,
@@ -257,8 +255,6 @@ Returns:
           per_page: params.per_page,
         };
         if (params.city) query["city"] = params.city;
-        if (params.online !== undefined) query["online"] = params.online;
-        if (params.order_by) query["order_by"] = params.order_by;
 
         const raw = await makeApiRequest<TherapistListResponse>(
           "marketplace/therapists",
