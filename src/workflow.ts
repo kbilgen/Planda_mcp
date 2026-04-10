@@ -75,7 +75,7 @@ function createAgent(): Agent {
   return new Agent({
     name: "PlandaAssistant",
     instructions: SYSTEM_PROMPT,
-    model: "gpt-4.1-mini",
+    model: (process.env.OPENAI_MODEL ?? "gpt-4.1-mini") as string,
     tools: [mcp],
     modelSettings: {
       store: true,
