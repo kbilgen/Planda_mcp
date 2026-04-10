@@ -114,7 +114,13 @@ async function runHttp(): Promise<void> {
       const { response, updatedHistory } = await runChat({ message, history });
       saveHistory(sessionId, updatedHistory);
 
-      res.json({ response, session_id: sessionId });
+      // Return both field names for iOS/client compatibility
+      res.json({
+        response,          // current field name
+        message: response, // alias — some clients may expect this
+        session_id: sessionId,
+        previous_response_id: sessionId, // alias for OpenAI Responses API compat
+      });
     } catch (err) {
       console.error("[planda] /v1/assistant/chat error:", err);
       res.status(502).json({ error: "Assistant unavailable. Please try again." });
