@@ -103,7 +103,10 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
   const prefix = index !== undefined ? `### ${index + 1}. ` : "## ";
   const lines: string[] = [];
 
-  const displayName = t.full_name ?? `${t.name}${t.surname ? " " + t.surname : ""}`;
+  const displayName =
+    t.full_name?.trim() ||
+    [t.name, t.surname].filter(Boolean).join(" ").trim() ||
+    `Terapist #${t.id}`;
   lines.push(`${prefix}${displayName} *(ID: ${t.id})*`);
 
   // Title from nested data

@@ -7,9 +7,9 @@ import { runGuardrails } from "@openai/guardrails";
 const mcp = hostedMcpTool({
   serverLabel: "Kaan_mcp",
   allowedTools: [
-    "planda_list_specialties",
     "planda_list_therapists",
     "planda_get_therapist",
+    // planda_list_specialties kaldırıldı — specialty listesi artık sistem talimatında gömülü
   ],
   requireApproval: "never",
   serverUrl: "https://plandamcp-production.up.railway.app/mcp",
@@ -165,42 +165,36 @@ Kullanıcı mesaj gönderdiği anda direkt ara, sonuçları oku, yanıt yaz.
 Asla soru sorma, asla "arıyorum" yazma.
 
 ## API GERÇEĞİ (test edildi)
-API'de sadece city ve per_page/page gerçekten filtreler.
-online, gender, min_price, max_price, specialties → hepsi ignored, her zaman tüm 59 terapist döner.
-Filtreler AI tarafında yapılmalı:
-- Online/yüz yüze → branches[].type ("online" veya "physical")
+Sadece city ve per_page/page filtreler. Diğerleri ignored.
+AI tarafında filtrele:
+- Online/yüz yüze → branches[].type === "online" veya "physical"
 - Şehir          → branches[].city.name
-- Ücret          → services[].custom_fee veya services[].fee (string, parse et)
-- Uzmanlık       → specialties[].id listesiyle karşılaştır
+- Ücret          → services[].custom_fee ?? services[].fee (string → parseFloat)
+
+## UZMANLIK ALANLARI (sabit liste — API çağrısı yapma)
+ID:Adı formatında: 47:Aile içi iletişim, 48:Akran İlişkileri, 12:Anlam arayışı, 13:Bağımlılık, 49:Bağlanma sorunları, 50:Cinsel sorunlar, 51:Çift sorunları, 52:Değer çatışmaları, 53:Dikkat ve konsantrasyon, 14:Ebeveynlik, 15:Ergenlik sorunları, 54:Fobi, 55:Gelişimsel sorunlar, 16:İlişki sorunları, 22:İletişim problemleri, 56:İş ve kariyer sorunları, 17:Kaygı(Anksiyete) ve Korku, 26:Kaygı(Anksiyete) ve Korku, 25:Kariyer ve okul sorunları, 30:Kişisel Farkındalık, 18:Kişilik bozuklukları, 57:Kronik hastalık uyumu, 58:Obsesif-Kompulsif Bozukluk, 19:Öfke kontrolü, 59:Özgüven ve kimlik sorunları, 20:Panik Bozukluğu, 60:Somatik belirtiler, 61:Sosyal fobi, 21:Stres yönetimi, 23:İlişkisel Problemler, 36:Uyum ve Adaptasyon Sorunları, 62:Yas ve kayıp, 63:Yeme bozuklukları, 64:Yetişkin DEHB
+
+Kullanıcının sorununu bu listeyle eşleştir, sonra specialties[].id ile filtrele.
 
 ## ARAÇLAR
-- planda_list_specialties → 34 uzmanlık alanını ID+isimle döndürür
-- planda_list_therapists  → terapist listesi; SADECE city parametresi filtreler
-- planda_get_therapist    → tek terapistin tam profili (approaches, tenants dahil)
+- planda_list_therapists → SADECE city filtreler; diğerleri ignored
+- planda_get_therapist   → approaches[] ve tenants[] için; EN FAZLA 2 ADAY için çağır
 
 ## ARAMA STRATEJİSİ
 
-**Adım 1 — Uzmanlık ID'lerini bul:**
-planda_list_specialties() çağır.
-Kullanıcının sorununa uyan specialty ID'lerini not et.
-("kaygı" → ID 26 "Kaygı(Anksiyete) ve Korku" gibi)
-
-**Adım 2 — Tüm terapistleri çek:**
+**Adım 1 — Listeyi çek:**
 planda_list_therapists({ per_page: 100 })
 Şehir belirtilmişse: planda_list_therapists({ city: "İstanbul", per_page: 100 })
 
-⛔ city dışında parametre gönderme — ignored olur.
-⛔ "Bulunamadı" deme — her zaman liste gelir.
+**Adım 2 — AI tarafında filtrele:**
+specialties[].id → yukarıdaki listeden eşleşen ID'ler
+branches[].type ve city.name → konum filtresi
+services[].custom_fee → bütçe filtresi
+En uygun 3–5 adayı seç.
 
-**Adım 3 — Sen filtrele:**
-- specialties[].id → Adım 1 ID'leriyle eşleştir
-- branches[].type  → online istiyorsa "online" branch var mı?
-- branches[].city.name → şehir uyuyor mu?
-- services[].custom_fee → bütçe uyuyor mu?
-3–5 en uygun adayı seç.
-
-**Adım 4 — Detay çek:**
-planda_get_therapist ile tam profili al → approaches[] ve tenants[] gelir.
+**Adım 3 — Detay (opsiyonel):**
+Sadece en iyi 1–2 aday için planda_get_therapist çağır.
+Liste verisinde yeterli bilgi varsa bu adımı atla — gereksiz çağrı yapma.
 
 ## SONUÇ FORMATI
 **[Ad Soyad]** — [Unvan]
