@@ -175,9 +175,10 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
     : [];
   if (approaches.length) lines.push(`**Terapi Yaklaşımı:** ${approaches.join(", ")}`);
 
-  // Profile URL from username
+  // Username — expose plainly so agent can use it in [[expert:username]] tags
   if (t.username) {
-    lines.push(`\n🔗 [Uzman Profiline Git](https://www.planda.org/uzmanlar/${t.username})`);
+    lines.push(`**username:** ${t.username}`);
+    lines.push(`**Profil:** https://www.planda.org/uzmanlar/${t.username}`);
   }
 
   // Bio — strip HTML, truncate to 400 chars
