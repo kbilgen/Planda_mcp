@@ -66,14 +66,18 @@ async function runHttp() {
     });
     // ── POST /v1/assistant/chat — iOS / mobile ana endpoint ─────────────────────
     //
-    // Request:
-    //   { "message": "string", "session_id": "uuid | null" }
+    // Request (her ikisi de desteklenir):
+    //   A) Client-side history (önerilir — server restart'a karşı dayanıklı):
+    //      { "message": "string", "session_id": "uuid", "history": [{role, content}] }
+    //
+    //   B) Server-side session (fallback):
+    //      { "message": "string", "session_id": "uuid | null" }
     //
     // Response:
     //   { "response": "string", "session_id": "uuid" }
     //
-    // session_id yoksa yeni oturum başlatılır.
-    // Sunucu history'yi saklar — client sadece session_id taşır.
+    // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
+    //          history yoksa → session store'dan yükle
     //
     app.post("/v1/assistant/chat", async (req, res) => {
         if (!process.env.OPENAI_API_KEY) {
@@ -86,22 +90,40 @@ async function runHttp() {
             res.status(400).json({ error: "message is required" });
             return;
         }
-        // session_id: body veya X-Session-Id header'dan al; yoksa yeni üret
+        // session_id: body → header → yeni UUID
         const sessionId = (typeof body.session_id === "string" && body.session_id.trim()
             ? body.session_id.trim()
             : null) ??
+            (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
+                ? body.previous_response_id.trim()
+                : null) ??
             req.headers["x-session-id"]?.trim() ??
             crypto.randomUUID();
+        // History kaynağı: client gönderirse onu kullan (server restart'a karşı güvenli)
+        // Gönderilmezse server-side session store'dan yükle
+        let history;
+        const clientHistory = Array.isArray(body.history) ? body.history : null;
+        if (clientHistory) {
+            // Client-side history — validate shape
+            history = clientHistory
+                .filter((m) => m !== null &&
+                typeof m === "object" &&
+                (m.role === "user" || m.role === "assistant") &&
+                typeof m.content === "string");
+        }
+        else {
+            // Server-side session store fallback
+            history = getHistory(sessionId);
+        }
         try {
-            const history = getHistory(sessionId);
             const { response, updatedHistory } = await runChat({ message, history });
+            // Server-side store'u da güncelle (her iki mod için)
             saveHistory(sessionId, updatedHistory);
-            // Return both field names for iOS/client compatibility
             res.json({
-                response, // current field name
-                message: response, // alias — some clients may expect this
+                response,
+                message: response, // alias
                 session_id: sessionId,
-                previous_response_id: sessionId, // alias for OpenAI Responses API compat
+                previous_response_id: sessionId, // alias
             });
         }
         catch (err) {
