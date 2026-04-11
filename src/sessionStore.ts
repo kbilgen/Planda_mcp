@@ -23,7 +23,7 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_HISTORY_TURNS = 40;
 const KEY_PREFIX = "planda:session:";
 
-// ─── Redis client ─────────────────────────────────────────────────────────────
+// ─── Redis client (export — auth.ts de kullanır) ─────────────────────────────
 
 let redis: Redis | null = null;
 
@@ -130,6 +130,11 @@ export async function deleteSession(sessionId: string): Promise<void> {
     }
   }
   memStore.delete(sessionId);
+}
+
+/** Shared Redis client — auth.ts tarafından import edilir */
+export function getRedis(): Redis | null {
+  return redis;
 }
 
 export function sessionCount(): number {
