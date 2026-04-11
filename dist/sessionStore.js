@@ -1,52 +1,102 @@
 /**
- * Planda Assistant — In-memory Session Store
+ * Planda Assistant — Session Store
  *
- * Stateless-friendly conversation history yönetimi.
- * Her session, basit role/content çiftleri olarak saklanır.
- * TTL süresi dolan sessionlar otomatik temizlenir.
+ * Redis varsa Redis kullanır (REDIS_URL env var).
+ * Redis yoksa in-memory store'a düşer (local dev / fallback).
+ *
+ * Redis: Railway private networking → redis.railway.internal:6379
+ * TTL: 30 dakika hareketsizlik → oturum silinir
  */
+import { Redis } from "ioredis";
 // ─── Config ──────────────────────────────────────────────────────────────────
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 dakika hareketsizlik → sil
-const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 dakikada bir temizle
-const MAX_HISTORY_TURNS = 40; // max 40 tur (= 80 mesaj) koru
-// ─── Store ───────────────────────────────────────────────────────────────────
-const store = new Map();
-// Periyodik cleanup — Railway restart olursa zaten temizlenir
+const SESSION_TTL_SEC = 30 * 60; // 30 dakika (Redis TTL saniye cinsinden)
+const SESSION_TTL_MS = SESSION_TTL_SEC * 1000; // in-memory için ms
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_HISTORY_TURNS = 40;
+const KEY_PREFIX = "planda:session:";
+// ─── Redis client ─────────────────────────────────────────────────────────────
+let redis = null;
+if (process.env.REDIS_URL) {
+    redis = new Redis(process.env.REDIS_URL, {
+        maxRetriesPerRequest: 3,
+        enableReadyCheck: true,
+        lazyConnect: false,
+    });
+    redis.on("connect", () => console.log("[sessionStore] Redis connected"));
+    redis.on("error", (err) => console.error("[sessionStore] Redis error:", err.message));
+    redis.on("close", () => console.log("[sessionStore] Redis connection closed"));
+    console.log("[sessionStore] Mode: Redis (persistent)");
+}
+else {
+    console.log("[sessionStore] Mode: in-memory (set REDIS_URL for persistence)");
+}
+const memStore = new Map();
 setInterval(() => {
     const now = Date.now();
     let cleaned = 0;
-    for (const [id, session] of store) {
-        if (now - session.lastAccessed > SESSION_TTL_MS) {
-            store.delete(id);
+    for (const [id, s] of memStore) {
+        if (now - s.lastAccessed > SESSION_TTL_MS) {
+            memStore.delete(id);
             cleaned++;
         }
     }
-    if (cleaned > 0) {
-        console.log(`[sessionStore] Cleaned ${cleaned} expired session(s). Active: ${store.size}`);
-    }
+    if (cleaned > 0)
+        console.log(`[sessionStore] Cleaned ${cleaned} expired in-memory session(s)`);
 }, CLEANUP_INTERVAL_MS);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function trim(history) {
+    const max = MAX_HISTORY_TURNS * 2; // her tur = user + assistant
+    return history.length > max ? history.slice(-max) : history;
+}
 // ─── Public API ───────────────────────────────────────────────────────────────
-export function getHistory(sessionId) {
-    const session = store.get(sessionId);
-    if (!session)
+export async function getHistory(sessionId) {
+    if (redis) {
+        try {
+            const raw = await redis.get(KEY_PREFIX + sessionId);
+            if (!raw)
+                return [];
+            // TTL'i yenile (sliding window)
+            await redis.expire(KEY_PREFIX + sessionId, SESSION_TTL_SEC);
+            return JSON.parse(raw);
+        }
+        catch (err) {
+            console.error("[sessionStore] Redis get error:", err);
+            // Redis hatası → in-memory'e düş
+        }
+    }
+    const s = memStore.get(sessionId);
+    if (!s)
         return [];
-    session.lastAccessed = Date.now();
-    return session.history;
+    s.lastAccessed = Date.now();
+    return s.history;
 }
-export function saveHistory(sessionId, history) {
-    // Sliding window — en eski mesajları at, son N turu koru
-    const trimmed = history.length > MAX_HISTORY_TURNS * 2
-        ? history.slice(-(MAX_HISTORY_TURNS * 2))
-        : history;
-    store.set(sessionId, {
-        history: trimmed,
-        lastAccessed: Date.now(),
-    });
+export async function saveHistory(sessionId, history) {
+    const trimmed = trim(history);
+    if (redis) {
+        try {
+            await redis.set(KEY_PREFIX + sessionId, JSON.stringify(trimmed), "EX", SESSION_TTL_SEC);
+            return;
+        }
+        catch (err) {
+            console.error("[sessionStore] Redis set error:", err);
+        }
+    }
+    memStore.set(sessionId, { history: trimmed, lastAccessed: Date.now() });
 }
-export function deleteSession(sessionId) {
-    store.delete(sessionId);
+export async function deleteSession(sessionId) {
+    if (redis) {
+        try {
+            await redis.del(KEY_PREFIX + sessionId);
+            return;
+        }
+        catch (err) {
+            console.error("[sessionStore] Redis del error:", err);
+        }
+    }
+    memStore.delete(sessionId);
 }
 export function sessionCount() {
-    return store.size;
+    // Redis modunda anlık sayı zaten Redis tarafında; in-memory için local map
+    return memStore.size;
 }
 //# sourceMappingURL=sessionStore.js.map

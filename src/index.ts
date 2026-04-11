@@ -78,14 +78,18 @@ async function runHttp(): Promise<void> {
 
   // ── POST /v1/assistant/chat — iOS / mobile ana endpoint ─────────────────────
   //
-  // Request:
-  //   { "message": "string", "session_id": "uuid | null" }
+  // Request (her ikisi de desteklenir):
+  //   A) Client-side history (önerilir — server restart'a karşı dayanıklı):
+  //      { "message": "string", "session_id": "uuid", "history": [{role, content}] }
+  //
+  //   B) Server-side session (fallback):
+  //      { "message": "string", "session_id": "uuid | null" }
   //
   // Response:
   //   { "response": "string", "session_id": "uuid" }
   //
-  // session_id yoksa yeni oturum başlatılır.
-  // Sunucu history'yi saklar — client sadece session_id taşır.
+  // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
+  //          history yoksa → session store'dan yükle
   //
   app.post("/v1/assistant/chat", async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY) {
@@ -93,28 +97,64 @@ async function runHttp(): Promise<void> {
       return;
     }
 
-    const body = req.body as { message?: unknown; session_id?: unknown };
-    const message = typeof body.message === "string" ? body.message.trim() : "";
+    const body = req.body as {
+      message?: unknown;
+      session_id?: unknown;
+      history?: unknown;
+      previous_response_id?: unknown;
+    };
 
+    const message = typeof body.message === "string" ? body.message.trim() : "";
     if (!message) {
       res.status(400).json({ error: "message is required" });
       return;
     }
 
-    // session_id: body veya X-Session-Id header'dan al; yoksa yeni üret
+    // session_id: body → header → yeni UUID
     const sessionId: string =
       (typeof body.session_id === "string" && body.session_id.trim()
         ? body.session_id.trim()
         : null) ??
+      (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
+        ? body.previous_response_id.trim()
+        : null) ??
       (req.headers["x-session-id"] as string | undefined)?.trim() ??
       crypto.randomUUID();
 
-    try {
-      const history = getHistory(sessionId);
-      const { response, updatedHistory } = await runChat({ message, history });
-      saveHistory(sessionId, updatedHistory);
+    // History kaynağı: client gönderirse onu kullan (server restart'a karşı güvenli)
+    // Gönderilmezse server-side session store'dan yükle
+    let history: import("./sessionStore.js").ChatMessage[];
 
-      res.json({ response, session_id: sessionId });
+    const clientHistory = Array.isArray(body.history) ? body.history : null;
+    if (clientHistory) {
+      // Client-side history — validate shape
+      history = clientHistory
+        .filter(
+          (m): m is { role: "user" | "assistant"; content: string } =>
+            m !== null &&
+            typeof m === "object" &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.content === "string"
+        );
+    } else {
+      // Server-side session store fallback (Redis veya in-memory)
+      history = await getHistory(sessionId);
+    }
+
+    try {
+      const { response, updatedHistory } = await runChat({ message, history });
+
+      // Store'u async güncelle — response'u bekletme
+      saveHistory(sessionId, updatedHistory).catch((err) =>
+        console.error("[planda] saveHistory error:", err)
+      );
+
+      res.json({
+        response,
+        message: response,           // alias
+        session_id: sessionId,
+        previous_response_id: sessionId, // alias
+      });
     } catch (err) {
       console.error("[planda] /v1/assistant/chat error:", err);
       res.status(502).json({ error: "Assistant unavailable. Please try again." });
