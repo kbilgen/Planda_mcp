@@ -4,21 +4,21 @@
  *
  * Endpoints:
  *   GET  /health                    — liveness check (no auth)
- *   POST /v1/assistant/chat         — iOS chat, buffered (requires X-API-Key)
- *   GET  /v1/assistant/chat/stream  — iOS chat, SSE streaming (requires X-API-Key)
+ *   POST /v1/assistant/chat         — iOS chat, buffered (requires Planda Bearer token)
+ *   GET  /v1/assistant/chat/stream  — iOS chat, SSE streaming (requires Planda Bearer token)
  *   POST /api/chat                  — legacy compat, stateless (no auth)
  *   POST /mcp                       — MCP JSON-RPC (AI clients)
  *   GET  /mcp                       — MCP SSE stream
  *   DELETE /mcp                     — MCP session termination
  *
  * Environment variables:
- *   PORT            — HTTP port (Railway sets automatically)
- *   TRANSPORT       — "http" (default) | "stdio"
- *   OPENAI_API_KEY  — Required for chat endpoints
- *   API_SECRET_KEY  — Required: shared secret iOS app sends as X-API-Key header
- *   PLANDA_API_KEY  — Optional Bearer token for Planda API
- *   CORS_ORIGIN     — Allowed CORS origin (default: "*")
- *   REDIS_URL       — Redis connection string for persistent sessions
+ *   PORT                  — HTTP port (Railway sets automatically)
+ *   TRANSPORT             — "http" (default) | "stdio"
+ *   OPENAI_API_KEY        — Required for chat endpoints
+ *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
+ *   REDIS_URL             — Redis connection string for persistent sessions
+ *   PLANDA_AUTH_ENDPOINT  — Optional override for token validation URL
+ *                           (default: https://app.planda.org/api/v1/marketplace/user)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -29,6 +29,7 @@ import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat } from "./workflow.js";
 import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
+import { validatePlandaToken } from "./auth.js";
 
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 
@@ -37,30 +38,32 @@ function sseWrite(res: Response, event: string, data: unknown): void {
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
-// API_SECRET_KEY set edilmemişse uyarı ver ama bloklama — dev ortamı için.
-// Production'da mutlaka set edilmeli.
+// iOS uygulaması Planda'ya login olduğunda bir Sanctum token üretilir.
+// Bu token Authorization: Bearer <token> header'ı ile gönderilir.
+// Middleware token'ı Planda API'ye doğrulatır — Redis cache'li (~1ms hit / ~200ms miss).
+// Token yoksa veya geçersizse 401 döner — MCP/backend'e hiç sorgu gitmez.
 
-const API_SECRET_KEY = process.env.API_SECRET_KEY;
+async function requirePlandaAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "").trim();
 
-if (!API_SECRET_KEY) {
-  console.warn("[planda] WARNING: API_SECRET_KEY not set — /v1/assistant endpoints are unprotected!");
-}
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized — Planda Bearer token required" });
+    return;
+  }
 
-function requireApiKey(req: Request, res: Response, next: NextFunction): void {
-  if (!API_SECRET_KEY) {
-    // Key tanımlı değilse geç (dev modu)
+  try {
+    const auth = await validatePlandaToken(token);
+    if (!auth.valid) {
+      res.status(401).json({ error: "Unauthorized — invalid or expired token" });
+      return;
+    }
+    // userId'yi request'e ekle — loglama / ileride rate-limiting için
+    (req as Request & { userId?: string }).userId = auth.userId;
     next();
-    return;
+  } catch (err) {
+    console.error("[planda] Auth middleware error:", err);
+    res.status(503).json({ error: "Auth service unavailable" });
   }
-  const provided =
-    (req.headers["x-api-key"] as string | undefined) ??
-    req.headers.authorization?.replace(/^Bearer\s+/i, "");
-
-  if (provided !== API_SECRET_KEY) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  next();
 }
 
 // ─── MCP Server factory ───────────────────────────────────────────────────────
@@ -126,7 +129,7 @@ async function runHttp(): Promise<void> {
   // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
   //          history yoksa → session store'dan yükle
   //
-  app.post("/v1/assistant/chat", requireApiKey, async (req: Request, res: Response) => {
+  app.post("/v1/assistant/chat", requirePlandaAuth, async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY) {
       res.status(500).json({ error: "OPENAI_API_KEY not configured" });
       return;
@@ -207,7 +210,7 @@ async function runHttp(): Promise<void> {
   //
   // iOS'ta: URLSession + EventSource ile parse edilir.
   //
-  app.post("/v1/assistant/chat/stream", requireApiKey, async (req: Request, res: Response) => {
+  app.post("/v1/assistant/chat/stream", requirePlandaAuth, async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY) {
       res.status(500).json({ error: "OPENAI_API_KEY not configured" });
       return;
