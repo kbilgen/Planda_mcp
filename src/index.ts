@@ -3,30 +3,65 @@
  * Planda MCP Server
  *
  * Endpoints:
- *   GET  /health                  — liveness check
- *   POST /v1/assistant/chat       — iOS / mobile chat (session-aware)
- *   POST /api/chat                — legacy compat (stateless, history in body)
- *   POST /mcp                     — MCP JSON-RPC (AI clients)
- *   GET  /mcp                     — MCP SSE stream
- *   DELETE /mcp                   — MCP session termination
+ *   GET  /health                    — liveness check (no auth)
+ *   POST /v1/assistant/chat         — iOS chat, buffered (requires X-API-Key)
+ *   GET  /v1/assistant/chat/stream  — iOS chat, SSE streaming (requires X-API-Key)
+ *   POST /api/chat                  — legacy compat, stateless (no auth)
+ *   POST /mcp                       — MCP JSON-RPC (AI clients)
+ *   GET  /mcp                       — MCP SSE stream
+ *   DELETE /mcp                     — MCP session termination
  *
  * Environment variables:
  *   PORT            — HTTP port (Railway sets automatically)
  *   TRANSPORT       — "http" (default) | "stdio"
- *   OPENAI_API_KEY  — Required for /v1/assistant/chat and /api/chat
+ *   OPENAI_API_KEY  — Required for chat endpoints
+ *   API_SECRET_KEY  — Required: shared secret iOS app sends as X-API-Key header
  *   PLANDA_API_KEY  — Optional Bearer token for Planda API
  *   CORS_ORIGIN     — Allowed CORS origin (default: "*")
+ *   REDIS_URL       — Redis connection string for persistent sessions
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
-import { runWorkflow } from "./workflow.js";
-import { runChat } from "./workflow.js";
+import { runWorkflow, runChat } from "./workflow.js";
 import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
+
+// ─── SSE helper ───────────────────────────────────────────────────────────────
+
+function sseWrite(res: Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+// ─── Auth middleware ──────────────────────────────────────────────────────────
+// API_SECRET_KEY set edilmemişse uyarı ver ama bloklama — dev ortamı için.
+// Production'da mutlaka set edilmeli.
+
+const API_SECRET_KEY = process.env.API_SECRET_KEY;
+
+if (!API_SECRET_KEY) {
+  console.warn("[planda] WARNING: API_SECRET_KEY not set — /v1/assistant endpoints are unprotected!");
+}
+
+function requireApiKey(req: Request, res: Response, next: NextFunction): void {
+  if (!API_SECRET_KEY) {
+    // Key tanımlı değilse geç (dev modu)
+    next();
+    return;
+  }
+  const provided =
+    (req.headers["x-api-key"] as string | undefined) ??
+    req.headers.authorization?.replace(/^Bearer\s+/i, "");
+
+  if (provided !== API_SECRET_KEY) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  next();
+}
 
 // ─── MCP Server factory ───────────────────────────────────────────────────────
 
@@ -59,7 +94,7 @@ async function runHttp(): Promise<void> {
     cors({
       origin: corsOrigin,
       methods: ["GET", "POST", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id"],
+      allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id", "X-API-Key"],
       exposedHeaders: ["Mcp-Session-Id"],
     })
   );
@@ -76,7 +111,7 @@ async function runHttp(): Promise<void> {
     });
   });
 
-  // ── POST /v1/assistant/chat — iOS / mobile ana endpoint ─────────────────────
+  // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
   //
   // Request (her ikisi de desteklenir):
   //   A) Client-side history (önerilir — server restart'a karşı dayanıklı):
@@ -91,7 +126,7 @@ async function runHttp(): Promise<void> {
   // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
   //          history yoksa → session store'dan yükle
   //
-  app.post("/v1/assistant/chat", async (req: Request, res: Response) => {
+  app.post("/v1/assistant/chat", requireApiKey, async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY) {
       res.status(500).json({ error: "OPENAI_API_KEY not configured" });
       return;
@@ -158,6 +193,94 @@ async function runHttp(): Promise<void> {
     } catch (err) {
       console.error("[planda] /v1/assistant/chat error:", err);
       res.status(502).json({ error: "Assistant unavailable. Please try again." });
+    }
+  });
+
+  // ── POST /v1/assistant/chat/stream — iOS SSE streaming endpoint ──────────────
+  //
+  // @openai/agents token-level streaming'i desteklemez.
+  // Bu endpoint şu stratejiyle en iyi UX'i sağlar:
+  //   1. Anında "status" eventi → iOS spinner/typing gösterir
+  //   2. Agent çalışır (tool calls + LLM)
+  //   3. Yanıt hazır olunca "response" eventi → metin bir seferde gelir
+  //   4. "done" eventi → bağlantı kapanır
+  //
+  // iOS'ta: URLSession + EventSource ile parse edilir.
+  //
+  app.post("/v1/assistant/chat/stream", requireApiKey, async (req: Request, res: Response) => {
+    if (!process.env.OPENAI_API_KEY) {
+      res.status(500).json({ error: "OPENAI_API_KEY not configured" });
+      return;
+    }
+
+    const body = req.body as {
+      message?: unknown;
+      session_id?: unknown;
+      history?: unknown;
+      previous_response_id?: unknown;
+    };
+
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    if (!message) {
+      res.status(400).json({ error: "message is required" });
+      return;
+    }
+
+    const sessionId: string =
+      (typeof body.session_id === "string" && body.session_id.trim()
+        ? body.session_id.trim()
+        : null) ??
+      (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
+        ? body.previous_response_id.trim()
+        : null) ??
+      (req.headers["x-session-id"] as string | undefined)?.trim() ??
+      crypto.randomUUID();
+
+    // SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Nginx proxy buffering'i kapat
+    res.flushHeaders();
+
+    // Anında "status" eventi — kullanıcı boş ekran görmez
+    sseWrite(res, "status", { message: "Terapistler aranıyor..." });
+
+    try {
+      const clientHistory = Array.isArray(body.history) ? body.history : null;
+      let history: import("./sessionStore.js").ChatMessage[];
+      if (clientHistory) {
+        history = clientHistory.filter(
+          (m): m is { role: "user" | "assistant"; content: string } =>
+            m !== null &&
+            typeof m === "object" &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.content === "string"
+        );
+      } else {
+        history = await getHistory(sessionId);
+      }
+
+      const { response, updatedHistory } = await runChat({ message, history });
+
+      saveHistory(sessionId, updatedHistory).catch((err) =>
+        console.error("[planda] saveHistory error:", err)
+      );
+
+      // Yanıtı SSE eventi olarak gönder
+      sseWrite(res, "response", {
+        response,
+        message: response,
+        session_id: sessionId,
+        previous_response_id: sessionId,
+      });
+
+      sseWrite(res, "done", { session_id: sessionId });
+    } catch (err) {
+      console.error("[planda] /v1/assistant/chat/stream error:", err);
+      sseWrite(res, "error", { error: "Assistant unavailable. Please try again." });
+    } finally {
+      res.end();
     }
   });
 
