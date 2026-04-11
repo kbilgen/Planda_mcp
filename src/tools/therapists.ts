@@ -98,6 +98,16 @@ function normaliseListResponse(
   };
 }
 
+/** Strips large text fields from therapist data to keep list response compact */
+function stripHeavyFields(therapists: Therapist[]): Therapist[] {
+  return therapists.map((t) => {
+    if (!t.data) return t;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { introduction_letter, inform, ...lightData } = t.data as Record<string, unknown>;
+    return { ...t, data: lightData as typeof t.data };
+  });
+}
+
 /** Renders a single therapist as Markdown using the real API structure */
 function therapistToMarkdown(t: Therapist, index?: number): string {
   const prefix = index !== undefined ? `### ${index + 1}. ` : "## ";
@@ -277,6 +287,8 @@ Returns:
         );
 
         let output = normaliseListResponse(raw, params.page, params.per_page);
+        // Strip large bio fields before character limit check — prevents truncation of list
+        output = { ...output, therapists: stripHeavyFields(output.therapists) };
         output = applyCharacterLimit(output);
 
         if (!output.therapists.length) {

@@ -73,6 +73,16 @@ function normaliseListResponse(raw, page, per_page) {
         therapists,
     };
 }
+/** Strips large text fields from therapist data to keep list response compact */
+function stripHeavyFields(therapists) {
+    return therapists.map((t) => {
+        if (!t.data)
+            return t;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { introduction_letter, inform, ...lightData } = t.data;
+        return { ...t, data: lightData };
+    });
+}
 /** Renders a single therapist as Markdown using the real API structure */
 function therapistToMarkdown(t, index) {
     const prefix = index !== undefined ? `### ${index + 1}. ` : "## ";
@@ -227,6 +237,8 @@ Returns:
                 query["city"] = params.city;
             const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, query);
             let output = normaliseListResponse(raw, params.page, params.per_page);
+            // Strip large bio fields before character limit check — prevents truncation of list
+            output = { ...output, therapists: stripHeavyFields(output.therapists) };
             output = applyCharacterLimit(output);
             if (!output.therapists.length) {
                 return {
