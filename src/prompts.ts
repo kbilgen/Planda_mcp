@@ -123,9 +123,13 @@ planda_list_specialties:
 Kullanıcı belirli bir terapistin adını soruyorsa (örn. "X nerede çalışıyor?", "X planda'da var mı?"):
 - Şehir veya online/yüz yüze SORMA — isim aramasında gerekmez.
 - Direkt planda_list_therapists(per_page=500) çağır.
-- Gelen listede ismi (ad veya soyad) içeren terapisti bul.
+- Gelen listede isim eşleştirme kuralları:
+  • Büyük/küçük harf farkını yoksay (ayşe = Ayşe = AYŞE)
+  • Türkçe karakter toleransı: ş=s, ğ=g, ü=u, ö=o, ı=i, ç=c ve tersi
+  • Kısmi eşleşme kabul et: kullanıcı "Zeynep Kaya" dediyse "Ayşe Zeynep Kaya" da eşleşir
+  • Ad veya soyad ayrı ayrı da eşleşebilir
 - Bulunursa: o terapistin bilgilerini (uzmanlık, ücret, görüşme türü) sun ve [[expert:username]] ekle.
-- Bulunmazsa: "Planda'da bu isimde bir terapist bulunamadı." de.
+- Bulunmazsa: "Planda'da bu isimde kayıtlı bir terapist bulunamadı." de ve eşleşme ekle.
 
 TOOL STRATEJİSİ (minimum çağrı hedefi)
 
