@@ -71,9 +71,10 @@ export async function validatePlandaToken(token: string): Promise<AuthResult> {
 
     if (res.ok) {
       const body = (await res.json()) as Record<string, unknown>;
-      // Planda user ID: data.id veya direkt id
+      // Planda response: { user: { id } } veya { data: { id } } veya { id }
       const uid =
         String(
+          (body?.user as Record<string, unknown>)?.id ??
           (body?.data as Record<string, unknown>)?.id ??
           body?.id ??
           "unknown"

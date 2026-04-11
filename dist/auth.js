@@ -54,8 +54,9 @@ export async function validatePlandaToken(token) {
         });
         if (res.ok) {
             const body = (await res.json());
-            // Planda user ID: data.id veya direkt id
-            const uid = String(body?.data?.id ??
+            // Planda response: { user: { id } } veya { data: { id } } veya { id }
+            const uid = String(body?.user?.id ??
+                body?.data?.id ??
                 body?.id ??
                 "unknown");
             result = { valid: true, userId: uid };
