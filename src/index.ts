@@ -137,15 +137,17 @@ async function runHttp(): Promise<void> {
             typeof m.content === "string"
         );
     } else {
-      // Server-side session store fallback
-      history = getHistory(sessionId);
+      // Server-side session store fallback (Redis veya in-memory)
+      history = await getHistory(sessionId);
     }
 
     try {
       const { response, updatedHistory } = await runChat({ message, history });
 
-      // Server-side store'u da güncelle (her iki mod için)
-      saveHistory(sessionId, updatedHistory);
+      // Store'u async güncelle — response'u bekletme
+      saveHistory(sessionId, updatedHistory).catch((err) =>
+        console.error("[planda] saveHistory error:", err)
+      );
 
       res.json({
         response,

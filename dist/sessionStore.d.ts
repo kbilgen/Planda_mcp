@@ -1,16 +1,18 @@
 /**
- * Planda Assistant — In-memory Session Store
+ * Planda Assistant — Session Store
  *
- * Stateless-friendly conversation history yönetimi.
- * Her session, basit role/content çiftleri olarak saklanır.
- * TTL süresi dolan sessionlar otomatik temizlenir.
+ * Redis varsa Redis kullanır (REDIS_URL env var).
+ * Redis yoksa in-memory store'a düşer (local dev / fallback).
+ *
+ * Redis: Railway private networking → redis.railway.internal:6379
+ * TTL: 30 dakika hareketsizlik → oturum silinir
  */
 export interface ChatMessage {
     role: "user" | "assistant";
     content: string;
 }
-export declare function getHistory(sessionId: string): ChatMessage[];
-export declare function saveHistory(sessionId: string, history: ChatMessage[]): void;
-export declare function deleteSession(sessionId: string): void;
+export declare function getHistory(sessionId: string): Promise<ChatMessage[]>;
+export declare function saveHistory(sessionId: string, history: ChatMessage[]): Promise<void>;
+export declare function deleteSession(sessionId: string): Promise<void>;
 export declare function sessionCount(): number;
 //# sourceMappingURL=sessionStore.d.ts.map
