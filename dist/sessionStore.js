@@ -14,7 +14,7 @@ const SESSION_TTL_MS = SESSION_TTL_SEC * 1000; // in-memory için ms
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_HISTORY_TURNS = 40;
 const KEY_PREFIX = "planda:session:";
-// ─── Redis client ─────────────────────────────────────────────────────────────
+// ─── Redis client (export — auth.ts de kullanır) ─────────────────────────────
 let redis = null;
 if (process.env.REDIS_URL) {
     redis = new Redis(process.env.REDIS_URL, {
@@ -94,6 +94,10 @@ export async function deleteSession(sessionId) {
         }
     }
     memStore.delete(sessionId);
+}
+/** Shared Redis client — auth.ts tarafından import edilir */
+export function getRedis() {
+    return redis;
 }
 export function sessionCount() {
     // Redis modunda anlık sayı zaten Redis tarafında; in-memory için local map
