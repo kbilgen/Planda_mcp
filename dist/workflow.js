@@ -121,7 +121,12 @@ export async function runChat(input) {
     });
 }
 export const runWorkflow = async (workflow) => {
-    const history = (workflow.history ?? []).slice(0, -1);
+    const all = workflow.history ?? [];
+    const last = all[all.length - 1];
+    // Caller'ın current mesajı history'ye eklemiş olması durumunu handle et
+    const history = last?.role === "user" && last?.content === workflow.input_as_text
+        ? all.slice(0, -1)
+        : all;
     const result = await runChat({ message: workflow.input_as_text, history });
     return { output_text: result.response };
 };

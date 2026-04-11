@@ -162,6 +162,8 @@ export async function runChat(input: ChatInput): Promise<ChatOutput> {
 }
 
 // ─── runWorkflow — /api/chat için (geriye dönük uyumluluk) ───────────────────
+// history: current message DAHİL ETMEYİN — sadece önceki turlar.
+// Eğer caller yanlışlıkla son user mesajını history'ye eklemişse çıkar.
 
 export type WorkflowInput = {
   input_as_text: string;
@@ -169,7 +171,15 @@ export type WorkflowInput = {
 };
 
 export const runWorkflow = async (workflow: WorkflowInput) => {
-  const history: ChatMessage[] = (workflow.history ?? []).slice(0, -1);
+  const all: ChatMessage[] = workflow.history ?? [];
+  const last = all[all.length - 1];
+
+  // Caller'ın current mesajı history'ye eklemiş olması durumunu handle et
+  const history: ChatMessage[] =
+    last?.role === "user" && last?.content === workflow.input_as_text
+      ? all.slice(0, -1)
+      : all;
+
   const result = await runChat({ message: workflow.input_as_text, history });
   return { output_text: result.response };
 };
