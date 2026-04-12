@@ -18,12 +18,9 @@ const mcp = hostedMcpTool({
   allowedTools: [
     "planda_list_therapists",
     "planda_get_therapist",
-    "planda_search_therapists",
   ],
   requireApproval: "never",
-  serverUrl:
-    process.env.SELF_MCP_URL ??
-    "https://plandamcp-production.up.railway.app/mcp",
+  serverUrl: "https://plandamcp-production.up.railway.app/mcp",
 });
 
 // ─── Guardrails ───────────────────────────────────────────────────────────────
@@ -184,5 +181,5 @@ export const runWorkflow = async (workflow: WorkflowInput) => {
       : all;
 
   const result = await runChat({ message: workflow.input_as_text, history });
-  return { output_json: result.response };
+  return { output_text: result.response };
 };

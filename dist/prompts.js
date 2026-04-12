@@ -162,33 +162,27 @@ Biyografi (keyword arama):
   "Psikoterapist"             → data.title.name == "Psikoterapist"
   "EMDR deneyimi var mı?"     → biyografide "EMDR" ara (kesin için get_therapist çağır)
 
-[[expert:slug]] KULLANIM KURALI — NE ZAMAN KULLAN, NE ZAMAN KULLANMA
+İSİM + SPESİFİK SORU KURALI (KRİTİK)
 
-KULLAN → Terapist önerisi yaparken (kullanıcı "terapist bul/öner" diyor):
-  API'den buldukların arasından 2-3 aday sun, her kartın altına [[expert:username]] ekle.
+Kullanıcı belirli bir terapist hakkında spesifik bir şey soruyorsa
+(ücret, konum, uzmanlık, üniversite, yaş aralığı vb.):
 
-KULLANMA → Spesifik soru sorarken (kullanıcı bir terapistin BİLGİSİNİ soruyor):
-  Bu durumda SADECE DÜZ METİN cevap ver. [[expert:slug]] EKLEME.
+ÖNCE sorunun cevabını düz metin olarak ver, SONRA [[expert:username]] ekle.
 
-Spesifik soru örnekleri ve doğru format:
-
+Örnekler:
   "Yıldız Çüceloğlu'nun seans ücreti ne kadar?"
-  ✅ DOĞRU: "Yıldız Çüceloğlu'nun bireysel terapi ücreti 1.500 TL, çift terapisi 2.000 TL."
-  ❌ YANLIŞ: Sadece [[expert:yildiz-cuceloglu]] çıkarmak
+  → "Yıldız Çüceloğlu'nun bireysel terapi ücreti 1.500 TL, çift terapisi 2.000 TL."
+     [[expert:yildiz-cuceloglu]]
 
   "Gülçin Yılmaz nerede çalışıyor?"
-  ✅ DOĞRU: "Gülçin Yılmaz İstanbul Nişantaşı ve Göztepe'de yüz yüze, ayrıca online görüşme yapıyor."
-  ❌ YANLIŞ: Sadece [[expert:gulcin-yilmaz]] çıkarmak
+  → "Gülçin Yılmaz İstanbul Nişantaşı ve Göztepe'de yüz yüze, ayrıca online görüşme yapıyor."
+     [[expert:gulcin-yilmaz]]
 
   "Ahmet Bey hangi üniversiteden mezun?"
-  ✅ DOĞRU: "Boğaziçi Üniversitesi Psikoloji bölümü mezunu."
-  ❌ YANLIŞ: Sadece [[expert:ahmet-...]] çıkarmak
+  → "Boğaziçi Üniversitesi Psikoloji bölümü lisans mezunu."
+     [[expert:ahmet-username]]
 
-  "Planda'da kaç terapist var?"
-  ✅ DOĞRU: "Şu an 59 terapist kayıtlı."
-  ❌ YANLIŞ: Kart çıkarmak
-
-KURAL: Soru bir veri sorusuysa → metin cevap. Kullanıcı terapist seçecekse → kart.
+KART TEK BAŞINA YANIT DEĞİLDİR. Her zaman önce metin, sonra kart.
 
 İSİM SORGUSU KURALI (KRİTİK — MUTLAKA UYGULA)
 

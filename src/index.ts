@@ -6,7 +6,7 @@
  *   GET  /health                    — liveness check (no auth)
  *   POST /v1/assistant/chat         — iOS chat, buffered (no auth)
  *   GET  /v1/assistant/chat/stream  — iOS chat, SSE streaming (no auth)
- *   POST /api/chat                  — stateful chat with sessionId (no auth)
+ *   POST /api/chat                  — legacy compat, stateless (no auth)
  *   POST /mcp                       — MCP JSON-RPC (AI clients)
  *   GET  /mcp                       — MCP SSE stream
  *   DELETE /mcp                     — MCP session termination
@@ -17,7 +17,6 @@
  *   OPENAI_API_KEY        — Required for chat endpoints
  *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
  *   REDIS_URL             — Redis connection string for persistent sessions
- *   SELF_MCP_URL          — URL of this server's /mcp endpoint (for agent self-reference)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -26,9 +25,66 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
-import { runChat } from "./workflow.js";
+import { runWorkflow, runChat } from "./workflow.js";
 import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
-import { chatRouter, parseAgentOutput } from "./routes/chat.js";
+import { makeApiRequest } from "./services/apiClient.js";
+import type { TherapistListResponse, Therapist } from "./types.js";
+
+// ─── Expert tag enrichment ────────────────────────────────────────────────────
+// If the agent outputs [[expert:slug]] with no preceding text, automatically
+// prepend the therapist's name, fee, and location so the iOS card shows content.
+
+async function enrichBareExpertTags(text: string): Promise<string> {
+  const tagPattern = /\[\[expert:([^\]]+)\]\]/g;
+  const tags = [...text.matchAll(tagPattern)];
+  if (tags.length === 0) return text;
+
+  // If there's already substantial text before the first tag, leave as-is
+  const firstTagIndex = text.indexOf(tags[0][0]);
+  const textBefore = text.slice(0, firstTagIndex).trim();
+  if (textBefore.length > 60) return text;
+
+  // Bare tag — enrich with a single list call
+  let therapists: Therapist[] = [];
+  try {
+    const raw = await makeApiRequest<TherapistListResponse>(
+      "marketplace/therapists", "GET", undefined, { per_page: 500 }
+    );
+    therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
+  } catch {
+    return text; // silently fall back to original
+  }
+
+  const enriched = text.replace(tagPattern, (_match, slug: string) => {
+    const t = therapists.find((th) => th.username === slug);
+    if (!t) return _match;
+
+    const name = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
+    const title = t.data?.title?.name ?? "";
+
+    const fees = (t.services ?? [])
+      .map((s) => {
+        const raw = s.custom_fee ?? s.fee;
+        return raw ? `${s.name}: ${Math.round(parseFloat(raw)).toLocaleString("tr-TR")} TL` : null;
+      })
+      .filter(Boolean);
+
+    const isOnline = (t.branches ?? []).some((b) => b.type === "online");
+    const cities = [...new Set(
+      (t.branches ?? []).filter((b) => b.type === "physical").map((b) => b.city?.name).filter(Boolean)
+    )];
+    const location = [isOnline ? "Online" : null, ...cities].filter(Boolean).join(" / ");
+
+    const lines: string[] = [];
+    if (name) lines.push(`${name}${title ? " — " + title : ""}`);
+    if (fees.length) lines.push(`Ücret: ${fees.join(" | ")}`);
+    if (location) lines.push(`Görüşme: ${location}`);
+
+    return lines.join("\n") + "\n" + _match;
+  });
+
+  return enriched;
+}
 
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 
@@ -93,9 +149,11 @@ async function runHttp(): Promise<void> {
   //   B) Server-side session (fallback):
   //      { "message": "string", "session_id": "uuid | null" }
   //
-  // Response: ChatResponse + { session_id }
-  //   { "text": "...", "cards": [...] | null, "quickReplies": [...] | null,
-  //     "crisis": bool | null, "outOfScope": bool | null, "session_id": "uuid" }
+  // Response:
+  //   { "response": "string", "session_id": "uuid" }
+  //
+  // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
+  //          history yoksa → session store'dan yükle
   //
   app.post("/v1/assistant/chat", async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY) {
@@ -128,33 +186,40 @@ async function runHttp(): Promise<void> {
       crypto.randomUUID();
 
     // History kaynağı: client gönderirse onu kullan (server restart'a karşı güvenli)
+    // Gönderilmezse server-side session store'dan yükle
     let history: import("./sessionStore.js").ChatMessage[];
 
     const clientHistory = Array.isArray(body.history) ? body.history : null;
     if (clientHistory) {
-      history = clientHistory.filter(
-        (m): m is { role: "user" | "assistant"; content: string } =>
-          m !== null &&
-          typeof m === "object" &&
-          (m.role === "user" || m.role === "assistant") &&
-          typeof m.content === "string"
-      );
+      // Client-side history — validate shape
+      history = clientHistory
+        .filter(
+          (m): m is { role: "user" | "assistant"; content: string } =>
+            m !== null &&
+            typeof m === "object" &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.content === "string"
+        );
     } else {
+      // Server-side session store fallback (Redis veya in-memory)
       history = await getHistory(sessionId);
     }
 
     try {
       const { response: rawResponse, updatedHistory } = await runChat({ message, history });
-
-      // Parse agent's JSON output into typed ChatResponse
-      const chatResponse = parseAgentOutput(rawResponse);
+      const response = await enrichBareExpertTags(rawResponse);
 
       // Store'u async güncelle — response'u bekletme
       saveHistory(sessionId, updatedHistory).catch((err) =>
         console.error("[planda] saveHistory error:", err)
       );
 
-      res.json({ ...chatResponse, session_id: sessionId });
+      res.json({
+        response,
+        message: response,           // alias
+        session_id: sessionId,
+        previous_response_id: sessionId, // alias
+      });
     } catch (err) {
       console.error("[planda] /v1/assistant/chat error:", err);
       res.status(502).json({ error: "Assistant unavailable. Please try again." });
@@ -167,8 +232,10 @@ async function runHttp(): Promise<void> {
   // Bu endpoint şu stratejiyle en iyi UX'i sağlar:
   //   1. Anında "status" eventi → iOS spinner/typing gösterir
   //   2. Agent çalışır (tool calls + LLM)
-  //   3. Yanıt hazır olunca "response" eventi → ChatResponse objesi gelir
+  //   3. Yanıt hazır olunca "response" eventi → metin bir seferde gelir
   //   4. "done" eventi → bağlantı kapanır
+  //
+  // iOS'ta: URLSession + EventSource ile parse edilir.
   //
   app.post("/v1/assistant/chat/stream", async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY) {
@@ -224,17 +291,21 @@ async function runHttp(): Promise<void> {
         history = await getHistory(sessionId);
       }
 
-      const { response: rawResponse, updatedHistory } = await runChat({ message, history });
-
-      // Parse agent's JSON output into typed ChatResponse
-      const chatResponse = parseAgentOutput(rawResponse);
+      const { response: rawResponse2, updatedHistory } = await runChat({ message, history });
+      const response = await enrichBareExpertTags(rawResponse2);
 
       saveHistory(sessionId, updatedHistory).catch((err) =>
         console.error("[planda] saveHistory error:", err)
       );
 
-      // Yanıtı SSE eventi olarak gönder — tam ChatResponse objesi
-      sseWrite(res, "response", { ...chatResponse, session_id: sessionId });
+      // Yanıtı SSE eventi olarak gönder
+      sseWrite(res, "response", {
+        response,
+        message: response,
+        session_id: sessionId,
+        previous_response_id: sessionId,
+      });
+
       sseWrite(res, "done", { session_id: sessionId });
     } catch (err) {
       console.error("[planda] /v1/assistant/chat/stream error:", err);
@@ -244,10 +315,33 @@ async function runHttp(): Promise<void> {
     }
   });
 
-  // ── POST /api/chat — stateful chat with sessionId ─────────────────────────────
-  // Request:  { "message": "string", "sessionId": "uuid" }
-  // Response: { "text": "...", "cards": [...], "quickReplies": [...], ... }
-  app.use("/api", chatRouter);
+  // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
+  app.post("/api/chat", async (req: Request, res: Response) => {
+    if (!process.env.OPENAI_API_KEY) {
+      res.status(500).json({ error: "OPENAI_API_KEY not configured" });
+      return;
+    }
+
+    const { message, history } = req.body as {
+      message: string;
+      history?: { role: "user" | "assistant"; content: string }[];
+    };
+
+    if (!message) {
+      res.status(400).json({ error: "message is required" });
+      return;
+    }
+
+    try {
+      const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
+      const rawText = (result as { output_text?: string }).output_text ?? JSON.stringify(result);
+      const text = await enrichBareExpertTags(rawText);
+      res.json({ response: text });
+    } catch (err) {
+      console.error("[planda] /api/chat error:", err);
+      res.status(502).json({ error: String(err) });
+    }
+  });
 
   // ── POST /mcp — MCP JSON-RPC ─────────────────────────────────────────────────
   app.post("/mcp", async (req: Request, res: Response) => {
@@ -303,10 +397,9 @@ async function runHttp(): Promise<void> {
   const port = parseInt(process.env.PORT ?? "3000", 10);
   app.listen(port, "0.0.0.0", () => {
     console.log(`[planda] HTTP server listening on 0.0.0.0:${port}`);
-    console.log(`[planda] Chat (stateful) : POST /api/chat`);
-    console.log(`[planda] Chat (legacy)   : POST /v1/assistant/chat`);
-    console.log(`[planda] MCP endpoint    : POST /mcp`);
-    console.log(`[planda] Health check    : GET  /health`);
+    console.log(`[planda] Chat endpoint : POST /v1/assistant/chat`);
+    console.log(`[planda] MCP endpoint  : POST /mcp`);
+    console.log(`[planda] Health check  : GET  /health`);
   });
 }
 
