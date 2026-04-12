@@ -169,6 +169,10 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
     lines.push(`**Ücret:** ${serviceLines.join(" | ")}`);
   }
 
+  // Rating
+  const rating = t.data?.weighted_rating ?? t.data?.rating ?? t.rating;
+  if (rating) lines.push(`**Puan:** ${Number(rating).toFixed(1)}`);
+
   // Therapy approaches (only on detail/get calls)
   const approaches = Array.isArray(t.approaches)
     ? t.approaches.map((a) => a.name).filter(Boolean)
@@ -178,15 +182,14 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
   // Username — expose plainly so agent can use it in [[expert:username]] tags
   if (t.username) {
     lines.push(`**username:** ${t.username}`);
-    lines.push(`**Profil:** https://www.planda.org/uzmanlar/${t.username}`);
   }
 
-  // Bio — strip HTML, truncate to 400 chars
+  // Bio — strip HTML, expose full text for keyword search (truncate to 600)
   const rawBio = t.data?.introduction_letter;
   if (rawBio) {
     const cleanBio = stripHtml(rawBio);
-    const shortBio = cleanBio.length > 400 ? cleanBio.slice(0, 397) + "..." : cleanBio;
-    lines.push(`\n> ${shortBio.replace(/\n/g, "\n> ")}`);
+    const shortBio = cleanBio.length > 600 ? cleanBio.slice(0, 597) + "..." : cleanBio;
+    lines.push(`**Biyografi:** ${shortBio}`);
   }
 
   lines.push(""); // blank line separator

@@ -137,16 +137,48 @@ const agentplanda = new Agent({
 Kullanıcı mesaj gönderdiği anda direkt ara, sonuçları oku, yanıt yaz.
 Asla soru sorma, asla "arıyorum" yazma.
 
-## API GERÇEĞİ (test edildi)
-Sadece city ve per_page/page filtreler. Diğerleri ignored.
-AI tarafında filtrele — liste verisinde mevcut tüm alanlar:
-- Online/yüz yüze → branches[].type === "online" veya "physical"
-- Şehir          → branches[].city.name
-- Ücret          → services[].custom_fee ?? services[].fee (string → parseFloat)
-- Üniversite     → data.undergraduateUniversity.name, data.postgraduateUniversity.name, data.doctorateUniversity.name
-- Unvan          → data.title.name (ör. "Psikolog", "Uzman Psikolog", "Psikoterapist")
-- Yaş aralığı   → data.other.min_client_age, data.other.max_client_age, data.other.accept_all_ages
-- İsme göre     → full_name veya name+surname ile tam/kısmi eşleşme
+## VERİ HARİTASI — liste çağrısında gelen tüm alanlar
+
+### Kimlik
+- full_name / name + surname → isim araması ("Gülçin Yılmaz var mı?")
+- username → [[expert:username]] için
+- data.title.name → "Psikolog" / "Uzman Psikolog" / "Psikoterapist" / "Psikolojik Danışman"
+
+### Konum
+- branches[].type → "online" veya "physical"
+- branches[].city.name → "İstanbul", "Ankara" …
+- branches[].address → tam adres, semt araması ("Kadıköy'de")
+
+### Ücret
+- services[].custom_fee ?? services[].fee → parseFloat (string gelir)
+- services[].name → "Bireysel Terapi", "Çift Terapisi", "Aile Terapisi", "Çocuk Terapisi" …
+- services[].custom_duration → seans süresi (dakika)
+
+### Uzmanlık
+- specialties[].id / .name → uzmanlık alanları (sabit listeyi kullan)
+
+### Eğitim
+- data.undergraduateUniversity.name → lisans üniversitesi ("Boğaziçi", "ODTÜ" …)
+- data.postgraduateUniversity.name → yüksek lisans üniversitesi
+- data.doctorateUniversity.name → doktora üniversitesi
+- data.undergraduateDepartment.name → bölüm ("Psikoloji", "Klinik Psikoloji" …)
+- data.postgraduateDepartment.name → YL bölümü
+
+### Danışan profili
+- data.other.min_client_age / max_client_age → yaş aralığı (sayı)
+- data.other.accept_all_ages → tüm yaşları kabul
+
+### Puan
+- data.weighted_rating → ağırlıklı puan (sıralama için)
+
+### Biyografi (anahtar kelime arama)
+- data.introduction_letter → HTML, strip et → serbest metin arama
+  Burada genellikle: deneyim yılı, sertifikalar, terapötik yaklaşım kelimeleri bulunur
+  Örnek: "EMDR sertifikası", "10 yıl deneyim", "çocuk" gibi kelimeler
+
+### Yalnızca planda_get_therapist'te gelen alanlar
+- approaches[].name → BDT, EMDR, DBT, Şema Terapi … (kesin filtre için detail çağır)
+- tenants[].company_name → klinik adı
 
 ## UZMANLIK ALANLARI (sabit liste — API çağrısı yapma)
 ID:Adı formatında: 47:Aile içi iletişim, 48:Akran İlişkileri, 12:Anlam arayışı, 13:Bağımlılık, 49:Bağlanma sorunları, 50:Cinsel sorunlar, 51:Çift sorunları, 52:Değer çatışmaları, 53:Dikkat ve konsantrasyon, 14:Ebeveynlik, 15:Ergenlik sorunları, 54:Fobi, 55:Gelişimsel sorunlar, 16:İlişki sorunları, 22:İletişim problemleri, 56:İş ve kariyer sorunları, 17:Kaygı(Anksiyete) ve Korku, 26:Kaygı(Anksiyete) ve Korku, 25:Kariyer ve okul sorunları, 30:Kişisel Farkındalık, 18:Kişilik bozuklukları, 57:Kronik hastalık uyumu, 58:Obsesif-Kompulsif Bozukluk, 19:Öfke kontrolü, 59:Özgüven ve kimlik sorunları, 20:Panik Bozukluğu, 60:Somatik belirtiler, 61:Sosyal fobi, 21:Stres yönetimi, 23:İlişkisel Problemler, 36:Uyum ve Adaptasyon Sorunları, 62:Yas ve kayıp, 63:Yeme bozuklukları, 64:Yetişkin DEHB
@@ -163,18 +195,20 @@ Kullanıcının sorununu bu listeyle eşleştir, sonra specialties[].id ile filt
 planda_list_therapists({ per_page: 100 })
 Şehir belirtilmişse: planda_list_therapists({ city: "İstanbul", per_page: 100 })
 
-**Adım 2 — AI tarafında filtrele:**
-specialties[].id → yukarıdaki listeden eşleşen ID'ler
-branches[].type ve city.name → konum filtresi
-services[].custom_fee → bütçe filtresi
-data.undergraduateUniversity.name / data.postgraduateUniversity.name → üniversite filtresi
-data.title.name → unvan filtresi
-full_name / name+surname → isim araması
+**Adım 2 — AI tarafında filtrele (Veri Haritası'nı kullan):**
+Soruya göre ilgili alanları kullan. Örnekler:
+- "Boğaziçi mezunları" → undergraduateUniversity.name içinde "Boğaziçi" ara
+- "En ucuz 3 terapist" → tüm services[].fee parseFloat et, küçükten büyüğe sırala
+- "Çocuk kabul eden" → min_client_age <= 12 veya accept_all_ages === true
+- "Kadıköy'de" → branches[].address içinde "Kadıköy" ara
+- "EMDR deneyimi var mı?" → intro_letter'da "EMDR" ara (kesin değil, approaches için detail çağır)
+- "Yüksek puanlı" → weighted_rating'e göre sırala
 En uygun 3–5 adayı seç.
 
 **Adım 3 — Detay (opsiyonel):**
 Sadece en iyi 1–2 aday için planda_get_therapist çağır.
-Liste verisinde yeterli bilgi varsa bu adımı atla — gereksiz çağrı yapma.
+Kesin yaklaşım (BDT/EMDR) veya klinik bilgisi gerekiyorsa çağır.
+Liste verisinde yeterli bilgi varsa bu adımı atla.
 
 ## SONUÇ FORMATI
 Her terapist için şu yapıyı kullan:
