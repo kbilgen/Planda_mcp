@@ -166,10 +166,14 @@ Asla soru sorma, asla "arıyorum" yazma.
 
 ## API GERÇEĞİ (test edildi)
 Sadece city ve per_page/page filtreler. Diğerleri ignored.
-AI tarafında filtrele:
+AI tarafında filtrele — liste verisinde mevcut tüm alanlar:
 - Online/yüz yüze → branches[].type === "online" veya "physical"
 - Şehir          → branches[].city.name
 - Ücret          → services[].custom_fee ?? services[].fee (string → parseFloat)
+- Üniversite     → data.undergraduateUniversity.name, data.postgraduateUniversity.name, data.doctorateUniversity.name
+- Unvan          → data.title.name (ör. "Psikolog", "Uzman Psikolog", "Psikoterapist")
+- Yaş aralığı   → data.other.min_client_age, data.other.max_client_age, data.other.accept_all_ages
+- İsme göre     → full_name veya name+surname ile tam/kısmi eşleşme
 
 ## UZMANLIK ALANLARI (sabit liste — API çağrısı yapma)
 ID:Adı formatında: 47:Aile içi iletişim, 48:Akran İlişkileri, 12:Anlam arayışı, 13:Bağımlılık, 49:Bağlanma sorunları, 50:Cinsel sorunlar, 51:Çift sorunları, 52:Değer çatışmaları, 53:Dikkat ve konsantrasyon, 14:Ebeveynlik, 15:Ergenlik sorunları, 54:Fobi, 55:Gelişimsel sorunlar, 16:İlişki sorunları, 22:İletişim problemleri, 56:İş ve kariyer sorunları, 17:Kaygı(Anksiyete) ve Korku, 26:Kaygı(Anksiyete) ve Korku, 25:Kariyer ve okul sorunları, 30:Kişisel Farkındalık, 18:Kişilik bozuklukları, 57:Kronik hastalık uyumu, 58:Obsesif-Kompulsif Bozukluk, 19:Öfke kontrolü, 59:Özgüven ve kimlik sorunları, 20:Panik Bozukluğu, 60:Somatik belirtiler, 61:Sosyal fobi, 21:Stres yönetimi, 23:İlişkisel Problemler, 36:Uyum ve Adaptasyon Sorunları, 62:Yas ve kayıp, 63:Yeme bozuklukları, 64:Yetişkin DEHB
@@ -190,6 +194,9 @@ planda_list_therapists({ per_page: 100 })
 specialties[].id → yukarıdaki listeden eşleşen ID'ler
 branches[].type ve city.name → konum filtresi
 services[].custom_fee → bütçe filtresi
+data.undergraduateUniversity.name / data.postgraduateUniversity.name → üniversite filtresi
+data.title.name → unvan filtresi
+full_name / name+surname → isim araması
 En uygun 3–5 adayı seç.
 
 **Adım 3 — Detay (opsiyonel):**
