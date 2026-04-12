@@ -26,6 +26,55 @@ import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat } from "./workflow.js";
 import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
+import { makeApiRequest } from "./services/apiClient.js";
+// ─── Expert tag enrichment ────────────────────────────────────────────────────
+// If the agent outputs [[expert:slug]] with no preceding text, automatically
+// prepend the therapist's name, fee, and location so the iOS card shows content.
+async function enrichBareExpertTags(text) {
+    const tagPattern = /\[\[expert:([^\]]+)\]\]/g;
+    const tags = [...text.matchAll(tagPattern)];
+    if (tags.length === 0)
+        return text;
+    // If there's already substantial text before the first tag, leave as-is
+    const firstTagIndex = text.indexOf(tags[0][0]);
+    const textBefore = text.slice(0, firstTagIndex).trim();
+    if (textBefore.length > 60)
+        return text;
+    // Bare tag — enrich with a single list call
+    let therapists = [];
+    try {
+        const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, { per_page: 500 });
+        therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
+    }
+    catch {
+        return text; // silently fall back to original
+    }
+    const enriched = text.replace(tagPattern, (_match, slug) => {
+        const t = therapists.find((th) => th.username === slug);
+        if (!t)
+            return _match;
+        const name = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
+        const title = t.data?.title?.name ?? "";
+        const fees = (t.services ?? [])
+            .map((s) => {
+            const raw = s.custom_fee ?? s.fee;
+            return raw ? `${s.name}: ${Math.round(parseFloat(raw)).toLocaleString("tr-TR")} TL` : null;
+        })
+            .filter(Boolean);
+        const isOnline = (t.branches ?? []).some((b) => b.type === "online");
+        const cities = [...new Set((t.branches ?? []).filter((b) => b.type === "physical").map((b) => b.city?.name).filter(Boolean))];
+        const location = [isOnline ? "Online" : null, ...cities].filter(Boolean).join(" / ");
+        const lines = [];
+        if (name)
+            lines.push(`${name}${title ? " — " + title : ""}`);
+        if (fees.length)
+            lines.push(`Ücret: ${fees.join(" | ")}`);
+        if (location)
+            lines.push(`Görüşme: ${location}`);
+        return lines.join("\n") + "\n" + _match;
+    });
+    return enriched;
+}
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 function sseWrite(res, event, data) {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -120,7 +169,8 @@ async function runHttp() {
             history = await getHistory(sessionId);
         }
         try {
-            const { response, updatedHistory } = await runChat({ message, history });
+            const { response: rawResponse, updatedHistory } = await runChat({ message, history });
+            const response = await enrichBareExpertTags(rawResponse);
             // Store'u async güncelle — response'u bekletme
             saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
             res.json({
@@ -185,7 +235,8 @@ async function runHttp() {
             else {
                 history = await getHistory(sessionId);
             }
-            const { response, updatedHistory } = await runChat({ message, history });
+            const { response: rawResponse2, updatedHistory } = await runChat({ message, history });
+            const response = await enrichBareExpertTags(rawResponse2);
             saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
             // Yanıtı SSE eventi olarak gönder
             sseWrite(res, "response", {
@@ -217,7 +268,8 @@ async function runHttp() {
         }
         try {
             const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
-            const text = result.output_text ?? JSON.stringify(result);
+            const rawText = result.output_text ?? JSON.stringify(result);
+            const text = await enrichBareExpertTags(rawText);
             res.json({ response: text });
         }
         catch (err) {
