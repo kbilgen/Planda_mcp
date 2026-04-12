@@ -1,6 +1,15 @@
+/**
+ * Planda Assistant — Agent & Workflow
+ *
+ * OpenAI Agents SDK kullanarak terapist eşleştirme akışını çalıştırır.
+ * Guardrails (moderation) input üzerinde uygulanır.
+ */
+
 import { hostedMcpTool, Agent, AgentInputItem, Runner, withTrace } from "@openai/agents";
 import { OpenAI } from "openai";
 import { runGuardrails } from "@openai/guardrails";
+import { SYSTEM_PROMPT } from "./prompts.js";
+import type { ChatMessage } from "./sessionStore.js";
 
 // ─── MCP Tool ────────────────────────────────────────────────────────────────
 
@@ -9,7 +18,6 @@ const mcp = hostedMcpTool({
   allowedTools: [
     "planda_list_therapists",
     "planda_get_therapist",
-    // planda_list_specialties kaldırıldı — specialty listesi artık sistem talimatında gömülü
   ],
   requireApproval: "never",
   serverUrl: "https://plandamcp-production.up.railway.app/mcp",
@@ -17,9 +25,9 @@ const mcp = hostedMcpTool({
 
 // ─── Guardrails ───────────────────────────────────────────────────────────────
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const guardrailsConfig = {
+const GUARDRAILS_CONFIG = {
   guardrails: [
     {
       name: "Moderation",
@@ -36,231 +44,126 @@ const guardrailsConfig = {
     },
   ],
 };
-const context = { guardrailLlm: client };
 
-function guardrailsHasTripwire(results: unknown[]): boolean {
-  return (results ?? []).some((r: unknown) => (r as { tripwireTriggered?: boolean })?.tripwireTriggered === true);
-}
+const guardrailsContext = { guardrailLlm: openaiClient };
 
-function getGuardrailSafeText(results: unknown[], fallbackText: string): string {
-  for (const r of results ?? []) {
-    const info = (r as { info?: Record<string, unknown> })?.info;
-    if (info && "checked_text" in info) {
-      return (info.checked_text as string) ?? fallbackText;
-    }
+async function checkGuardrails(text: string): Promise<{ blocked: boolean; reason?: string }> {
+  try {
+    const results = (await runGuardrails(
+      text,
+      GUARDRAILS_CONFIG as never,
+      guardrailsContext,
+      true
+    )) as Array<{ tripwireTriggered?: boolean; info?: { flagged_categories?: string[] } }>;
+
+    const blocked = results.some((r) => r.tripwireTriggered === true);
+    if (!blocked) return { blocked: false };
+
+    const flagged = results
+      .flatMap((r) => r.info?.flagged_categories ?? [])
+      .join(", ");
+    return { blocked: true, reason: flagged || "content policy violation" };
+  } catch {
+    // Guardrail hatası akışı durdurmasın
+    return { blocked: false };
   }
-  const pii = (results ?? []).find((r: unknown) => {
-    const info = (r as { info?: Record<string, unknown> })?.info;
-    return info && "anonymized_text" in info;
-  }) as { info?: Record<string, unknown> } | undefined;
-  return (pii?.info?.anonymized_text as string) ?? fallbackText;
-}
-
-async function scrubConversationHistory(history: AgentInputItem[], piiOnly: unknown): Promise<void> {
-  for (const msg of history ?? []) {
-    const content = Array.isArray((msg as { content?: unknown }).content)
-      ? (msg as { content: unknown[] }).content
-      : [];
-    for (const part of content) {
-      if (
-        part &&
-        typeof part === "object" &&
-        (part as { type?: string }).type === "input_text" &&
-        typeof (part as { text?: string }).text === "string"
-      ) {
-        const res = await runGuardrails((part as { text: string }).text, piiOnly as never, context, true);
-        (part as { text: string }).text = getGuardrailSafeText(res as unknown[], (part as { text: string }).text);
-      }
-    }
-  }
-}
-
-async function scrubWorkflowInput(workflow: Record<string, unknown>, inputKey: string, piiOnly: unknown): Promise<void> {
-  if (!workflow || typeof workflow !== "object") return;
-  const value = workflow[inputKey];
-  if (typeof value !== "string") return;
-  const res = await runGuardrails(value, piiOnly as never, context, true);
-  workflow[inputKey] = getGuardrailSafeText(res as unknown[], value);
-}
-
-async function runAndApplyGuardrails(
-  inputText: string,
-  config: typeof guardrailsConfig,
-  history: AgentInputItem[],
-  workflow: Record<string, unknown>
-) {
-  const guardrails = Array.isArray(config?.guardrails) ? config.guardrails : [];
-  const results = await runGuardrails(inputText, config as never, context, true);
-  const shouldMaskPII = guardrails.find(
-    (g) => g?.name === "Contains PII" && (g as { config?: { block?: boolean } })?.config?.block === false
-  );
-  if (shouldMaskPII) {
-    const piiOnly = { guardrails: [shouldMaskPII] };
-    await scrubConversationHistory(history, piiOnly);
-    await scrubWorkflowInput(workflow, "input_as_text", piiOnly);
-    await scrubWorkflowInput(workflow, "input_text", piiOnly);
-  }
-  const hasTripwire = guardrailsHasTripwire(results as unknown[]);
-  const safeText = getGuardrailSafeText(results as unknown[], inputText) ?? inputText;
-  return {
-    results,
-    hasTripwire,
-    safeText,
-    failOutput: buildGuardrailFailOutput(results as unknown[]),
-    passOutput: { safe_text: safeText },
-  };
-}
-
-function buildGuardrailFailOutput(results: unknown[]) {
-  const get = (name: string) =>
-    (results ?? []).find(
-      (r: unknown) =>
-        ((r as { info?: { guardrail_name?: string; guardrailName?: string } })?.info?.guardrail_name ??
-          (r as { info?: { guardrailName?: string } })?.info?.guardrailName) === name
-    ) as Record<string, unknown> | undefined;
-
-  const pii = get("Contains PII");
-  const mod = get("Moderation");
-  const jb = get("Jailbreak");
-  const hal = get("Hallucination Detection");
-  const nsfw = get("NSFW Text");
-  const url = get("URL Filter");
-  const custom = get("Custom Prompt Check");
-  const pid = get("Prompt Injection Detection");
-
-  const piiInfo = pii?.info as Record<string, unknown> | undefined;
-  const piiCounts = Object.entries((piiInfo?.detected_entities as Record<string, unknown[]>) ?? {})
-    .filter(([, v]) => Array.isArray(v))
-    .map(([k, v]) => k + ":" + v.length);
-
-  return {
-    pii: { failed: piiCounts.length > 0 || pii?.tripwireTriggered === true, detected_counts: piiCounts },
-    moderation: {
-      failed: mod?.tripwireTriggered === true || ((mod?.info as { flagged_categories?: unknown[] })?.flagged_categories ?? []).length > 0,
-      flagged_categories: (mod?.info as { flagged_categories?: unknown[] })?.flagged_categories,
-    },
-    jailbreak: { failed: jb?.tripwireTriggered === true },
-    hallucination: {
-      failed: hal?.tripwireTriggered === true,
-      reasoning: (hal?.info as Record<string, unknown>)?.reasoning,
-      hallucination_type: (hal?.info as Record<string, unknown>)?.hallucination_type,
-      hallucinated_statements: (hal?.info as Record<string, unknown>)?.hallucinated_statements,
-      verified_statements: (hal?.info as Record<string, unknown>)?.verified_statements,
-    },
-    nsfw: { failed: nsfw?.tripwireTriggered === true },
-    url_filter: { failed: url?.tripwireTriggered === true },
-    custom_prompt_check: { failed: custom?.tripwireTriggered === true },
-    prompt_injection: { failed: pid?.tripwireTriggered === true },
-  };
 }
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
-const agentplanda = new Agent({
-  name: "Agentplanda",
-  instructions: `Sen Planda platformunda terapist bulan bir asistansın.
+function createAgent(): Agent {
+  return new Agent({
+    name: "PlandaAssistant",
+    instructions: SYSTEM_PROMPT,
+    model: (process.env.OPENAI_MODEL ?? "gpt-4.1-mini") as string,
+    tools: [mcp],
+    modelSettings: {
+      store: true,
+    },
+  });
+}
 
-## TEMEL KURAL
-Kullanıcı mesaj gönderdiği anda direkt ara, sonuçları oku, yanıt yaz.
-Asla soru sorma, asla "arıyorum" yazma.
+// Singleton agent — her request yeniden oluşturmaya gerek yok
+const agent = createAgent();
 
-## VERİ HARİTASI — liste çağrısında gelen tüm alanlar
-
-### Kimlik
-- full_name / name + surname → isim araması ("Gülçin Yılmaz var mı?")
-- username → [[expert:username]] için
-- data.title.name → "Psikolog" / "Uzman Psikolog" / "Psikoterapist" / "Psikolojik Danışman"
-
-### Konum
-- branches[].type → "online" veya "physical"
-- branches[].city.name → "İstanbul", "Ankara" …
-- branches[].address → tam adres, semt araması ("Kadıköy'de")
-
-### Ücret
-- services[].custom_fee ?? services[].fee → parseFloat (string gelir)
-- services[].name → "Bireysel Terapi", "Çift Terapisi", "Aile Terapisi", "Çocuk Terapisi" …
-- services[].custom_duration → seans süresi (dakika)
-
-### Uzmanlık
-- specialties[].id / .name → uzmanlık alanları (sabit listeyi kullan)
-
-### Eğitim
-- data.undergraduateUniversity.name → lisans üniversitesi ("Boğaziçi", "ODTÜ" …)
-- data.postgraduateUniversity.name → yüksek lisans üniversitesi
-- data.doctorateUniversity.name → doktora üniversitesi
-- data.undergraduateDepartment.name → bölüm ("Psikoloji", "Klinik Psikoloji" …)
-- data.postgraduateDepartment.name → YL bölümü
-
-### Danışan profili
-- data.other.min_client_age / max_client_age → yaş aralığı (sayı)
-- data.other.accept_all_ages → tüm yaşları kabul
-
-### Puan
-- data.weighted_rating → ağırlıklı puan (sıralama için)
-
-### Biyografi (anahtar kelime arama)
-- data.introduction_letter → HTML, strip et → serbest metin arama
-  Burada genellikle: deneyim yılı, sertifikalar, terapötik yaklaşım kelimeleri bulunur
-  Örnek: "EMDR sertifikası", "10 yıl deneyim", "çocuk" gibi kelimeler
-
-### Yalnızca planda_get_therapist'te gelen alanlar
-- approaches[].name → BDT, EMDR, DBT, Şema Terapi … (kesin filtre için detail çağır)
-- tenants[].company_name → klinik adı
-
-## UZMANLIK ALANLARI (sabit liste — API çağrısı yapma)
-ID:Adı formatında: 47:Aile içi iletişim, 48:Akran İlişkileri, 12:Anlam arayışı, 13:Bağımlılık, 49:Bağlanma sorunları, 50:Cinsel sorunlar, 51:Çift sorunları, 52:Değer çatışmaları, 53:Dikkat ve konsantrasyon, 14:Ebeveynlik, 15:Ergenlik sorunları, 54:Fobi, 55:Gelişimsel sorunlar, 16:İlişki sorunları, 22:İletişim problemleri, 56:İş ve kariyer sorunları, 17:Kaygı(Anksiyete) ve Korku, 26:Kaygı(Anksiyete) ve Korku, 25:Kariyer ve okul sorunları, 30:Kişisel Farkındalık, 18:Kişilik bozuklukları, 57:Kronik hastalık uyumu, 58:Obsesif-Kompulsif Bozukluk, 19:Öfke kontrolü, 59:Özgüven ve kimlik sorunları, 20:Panik Bozukluğu, 60:Somatik belirtiler, 61:Sosyal fobi, 21:Stres yönetimi, 23:İlişkisel Problemler, 36:Uyum ve Adaptasyon Sorunları, 62:Yas ve kayıp, 63:Yeme bozuklukları, 64:Yetişkin DEHB
-
-Kullanıcının sorununu bu listeyle eşleştir, sonra specialties[].id ile filtrele.
-
-## ARAÇLAR
-- planda_list_therapists → SADECE city filtreler; diğerleri ignored
-- planda_get_therapist   → approaches[] ve tenants[] için; EN FAZLA 2 ADAY için çağır
-
-## ARAMA STRATEJİSİ
-
-**Adım 1 — Listeyi çek:**
-planda_list_therapists({ per_page: 100 })
-Şehir belirtilmişse: planda_list_therapists({ city: "İstanbul", per_page: 100 })
-
-**Adım 2 — AI tarafında filtrele (Veri Haritası'nı kullan):**
-Soruya göre ilgili alanları kullan. Örnekler:
-- "Boğaziçi mezunları" → undergraduateUniversity.name içinde "Boğaziçi" ara
-- "En ucuz 3 terapist" → tüm services[].fee parseFloat et, küçükten büyüğe sırala
-- "Çocuk kabul eden" → min_client_age <= 12 veya accept_all_ages === true
-- "Kadıköy'de" → branches[].address içinde "Kadıköy" ara
-- "EMDR deneyimi var mı?" → intro_letter'da "EMDR" ara (kesin değil, approaches için detail çağır)
-- "Yüksek puanlı" → weighted_rating'e göre sırala
-En uygun 3–5 adayı seç.
-
-**Adım 3 — Detay (opsiyonel):**
-Sadece en iyi 1–2 aday için planda_get_therapist çağır.
-Kesin yaklaşım (BDT/EMDR) veya klinik bilgisi gerekiyorsa çağır.
-Liste verisinde yeterli bilgi varsa bu adımı atla.
-
-## SONUÇ FORMATI
-Her terapist için şu yapıyı kullan:
-
-**[Ad Soyad]** — [Unvan]
-Uzmanlık: [ilgili specialties]
-Yaklaşım: [approaches — sadece varsa]
-Ücret: [custom_fee veya fee] TL | Görüşme: [Online / Şehir adı]
-Neden uygun: [1 cümle]
-[[expert:{username}]]
-
-ZORUNLU: Her terapist kartının sonuna [[expert:{username}]] tag'ini yaz (örnek: [[expert:ayse-demir]]). username alanı API'den gelir.
-
-## KURALLAR
-- Türkçe konuş
-- Tanı koyma, tıbbi tavsiye verme
-- Kriz (intihar vb.): 182 ALO Psikiyatri Hattı'nı yönlendir, aramayı durdur`,
-  model: "gpt-4.1-mini",
-  tools: [mcp],
-  modelSettings: {
-    store: true,
+const runner = new Runner({
+  traceMetadata: {
+    __trace_source__: "agent-builder",
+    workflow_id: "wf_69ceac5a340c81908ac3f8d49e1afa0103e85e9ffaa5af21",
   },
 });
 
-// ─── Workflow entry point ─────────────────────────────────────────────────────
+// ─── History helpers ──────────────────────────────────────────────────────────
+
+function toAgentItems(history: ChatMessage[], currentMessage: string): AgentInputItem[] {
+  const items: AgentInputItem[] = history.map((m): AgentInputItem => {
+    if (m.role === "user") {
+      return { role: "user", content: m.content };
+    }
+    return {
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: m.content }],
+    } as AgentInputItem;
+  });
+
+  items.push({
+    role: "user",
+    content: [{ type: "input_text", text: currentMessage }],
+  });
+
+  return items;
+}
+
+// ─── runChat — /v1/assistant/chat için ───────────────────────────────────────
+
+export interface ChatInput {
+  message: string;
+  history: ChatMessage[];
+}
+
+export interface ChatOutput {
+  response: string;
+  updatedHistory: ChatMessage[];
+}
+
+export async function runChat(input: ChatInput): Promise<ChatOutput> {
+  return withTrace("PlandaChat", async () => {
+    // 1. Guardrail kontrolü
+    const guard = await checkGuardrails(input.message);
+    if (guard.blocked) {
+      const safeResponse =
+        "Bu konuda sana yardımcı olamıyorum. Uygun bir terapist bulmak için buradayım — devam edelim mi?";
+      return {
+        response: safeResponse,
+        updatedHistory: [
+          ...input.history,
+          { role: "user" as const, content: input.message },
+          { role: "assistant" as const, content: safeResponse },
+        ],
+      };
+    }
+
+    // 2. Agent çalıştır
+    const agentItems = toAgentItems(input.history, input.message);
+    const result = await runner.run(agent, agentItems);
+
+    const responseText = result.finalOutput ?? "";
+
+    // 3. History güncelle
+    const updatedHistory: ChatMessage[] = [
+      ...input.history,
+      { role: "user" as const, content: input.message },
+      { role: "assistant" as const, content: responseText },
+    ];
+
+    return { response: responseText, updatedHistory };
+  });
+}
+
+// ─── runWorkflow — /api/chat için (geriye dönük uyumluluk) ───────────────────
+// history: current message DAHİL ETMEYİN — sadece önceki turlar.
+// Eğer caller yanlışlıkla son user mesajını history'ye eklemişse çıkar.
 
 export type WorkflowInput = {
   input_as_text: string;
@@ -268,51 +171,15 @@ export type WorkflowInput = {
 };
 
 export const runWorkflow = async (workflow: WorkflowInput) => {
-  return await withTrace("Planda", async () => {
-    // Build conversation history
-    const prior = (workflow.history ?? []).slice(0, -1);
-    const conversationHistory: AgentInputItem[] = [
-      ...prior.map((m): AgentInputItem => {
-        if (m.role === "user") {
-          return { role: "user", content: m.content };
-        }
-        return {
-          role: "assistant",
-          status: "completed",
-          content: [{ type: "output_text", text: m.content }],
-        } as AgentInputItem;
-      }),
-      {
-        role: "user",
-        content: [{ type: "input_text", text: workflow.input_as_text }],
-      },
-    ];
+  const all: ChatMessage[] = workflow.history ?? [];
+  const last = all[all.length - 1];
 
-    const runner = new Runner({
-      traceMetadata: {
-        __trace_source__: "agent-builder",
-        workflow_id: "wf_69ceac5a340c81908ac3f8d49e1afa0103e85e9ffaa5af21",
-      },
-    });
+  // Caller'ın current mesajı history'ye eklemiş olması durumunu handle et
+  const history: ChatMessage[] =
+    last?.role === "user" && last?.content === workflow.input_as_text
+      ? all.slice(0, -1)
+      : all;
 
-    // Run guardrails on input
-    const { hasTripwire, failOutput, passOutput } = await runAndApplyGuardrails(
-      workflow.input_as_text,
-      guardrailsConfig,
-      conversationHistory,
-      workflow as unknown as Record<string, unknown>
-    );
-
-    if (hasTripwire) {
-      return failOutput;
-    }
-
-    const agentResult = await runner.run(agentplanda, [...conversationHistory]);
-
-    if (!agentResult.finalOutput) {
-      throw new Error("Agent result is undefined");
-    }
-
-    return { output_text: agentResult.finalOutput };
-  });
+  const result = await runChat({ message: workflow.input_as_text, history });
+  return { output_text: result.response };
 };

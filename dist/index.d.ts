@@ -2,22 +2,21 @@
 /**
  * Planda MCP Server
  *
- * Provides LLM tools to query the Planda marketplace therapist API.
- *
- * Tools:
- *   - planda_list_therapists   : Paginated list with filters
- *   - planda_get_therapist     : Single therapist profile by ID
- *   - planda_search_therapists : Free-text search
- *
- * Transport:
- *   - Set TRANSPORT=http (or leave unset on Hostinger) to run as HTTP server
- *   - Set TRANSPORT=stdio for local Claude Desktop integration
+ * Endpoints:
+ *   GET  /health                    — liveness check (no auth)
+ *   POST /v1/assistant/chat         — iOS chat, buffered (no auth)
+ *   GET  /v1/assistant/chat/stream  — iOS chat, SSE streaming (no auth)
+ *   POST /api/chat                  — legacy compat, stateless (no auth)
+ *   POST /mcp                       — MCP JSON-RPC (AI clients)
+ *   GET  /mcp                       — MCP SSE stream
+ *   DELETE /mcp                     — MCP session termination
  *
  * Environment variables:
- *   - PORT            : HTTP server port (Hostinger sets this automatically)
- *   - TRANSPORT       : "http" (default on Hostinger) or "stdio"
- *   - PLANDA_API_KEY  : Optional Bearer token for authenticated Planda API calls
- *   - CORS_ORIGIN     : Allowed CORS origin (default: "*" — open for OpenAI)
+ *   PORT                  — HTTP port (Railway sets automatically)
+ *   TRANSPORT             — "http" (default) | "stdio"
+ *   OPENAI_API_KEY        — Required for chat endpoints
+ *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
+ *   REDIS_URL             — Redis connection string for persistent sessions
  */
 export {};
 //# sourceMappingURL=index.d.ts.map

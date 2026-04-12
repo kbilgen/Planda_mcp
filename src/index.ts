@@ -2,22 +2,21 @@
 /**
  * Planda MCP Server
  *
- * Provides LLM tools to query the Planda marketplace therapist API.
- *
- * Tools:
- *   - planda_list_therapists   : Paginated list with filters
- *   - planda_get_therapist     : Single therapist profile by ID
- *   - planda_search_therapists : Free-text search
- *
- * Transport:
- *   - Set TRANSPORT=http (or leave unset on Hostinger) to run as HTTP server
- *   - Set TRANSPORT=stdio for local Claude Desktop integration
+ * Endpoints:
+ *   GET  /health                    — liveness check (no auth)
+ *   POST /v1/assistant/chat         — iOS chat, buffered (no auth)
+ *   GET  /v1/assistant/chat/stream  — iOS chat, SSE streaming (no auth)
+ *   POST /api/chat                  — legacy compat, stateless (no auth)
+ *   POST /mcp                       — MCP JSON-RPC (AI clients)
+ *   GET  /mcp                       — MCP SSE stream
+ *   DELETE /mcp                     — MCP session termination
  *
  * Environment variables:
- *   - PORT            : HTTP server port (Hostinger sets this automatically)
- *   - TRANSPORT       : "http" (default on Hostinger) or "stdio"
- *   - PLANDA_API_KEY  : Optional Bearer token for authenticated Planda API calls
- *   - CORS_ORIGIN     : Allowed CORS origin (default: "*" — open for OpenAI)
+ *   PORT                  — HTTP port (Railway sets automatically)
+ *   TRANSPORT             — "http" (default) | "stdio"
+ *   OPENAI_API_KEY        — Required for chat endpoints
+ *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
+ *   REDIS_URL             — Redis connection string for persistent sessions
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -25,16 +24,17 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { Request, Response } from "express";
 import cors from "cors";
-import cookieParser from "cookie-parser";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
 import { registerTherapistTools } from "./tools/therapists.js";
-import { runWorkflow } from "./workflow.js";
+import { runWorkflow, runChat } from "./workflow.js";
+import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// ─── SSE helper ───────────────────────────────────────────────────────────────
 
-// ─── Factory: create a fresh MCP server instance (for stateless HTTP mode) ───
+function sseWrite(res: Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+// ─── MCP Server factory ───────────────────────────────────────────────────────
 
 function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -45,177 +45,278 @@ function createMcpServer(): McpServer {
   return server;
 }
 
-// ─── Transport: stdio (local use) ────────────────────────────────────────────
+// ─── stdio transport ──────────────────────────────────────────────────────────
 
 async function runStdio(): Promise<void> {
-  const transport = new StdioServerTransport();
   const server = createMcpServer();
+  const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.log("[planda-mcp-server] Running via stdio transport");
+  console.log("[planda] Running via stdio transport");
 }
 
-// ─── Transport: Streamable HTTP (Hostinger / remote) ─────────────────────────
+// ─── HTTP transport ───────────────────────────────────────────────────────────
 
 async function runHttp(): Promise<void> {
   const app = express();
 
-  // ── CORS ─────────────────────────────────────────────────────────────────────
-  // OpenAI Playground and Agents SDK call from their servers — allow all origins.
-  // Restrict via CORS_ORIGIN env var if you want tighter control.
+  // CORS — iOS ve AI istemcilerinin erişmesi için açık
   const corsOrigin = process.env.CORS_ORIGIN ?? "*";
   app.use(
     cors({
       origin: corsOrigin,
       methods: ["GET", "POST", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id"],
+      allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id", "X-API-Key"],
       exposedHeaders: ["Mcp-Session-Id"],
     })
   );
-
-  // Handle OPTIONS preflight for all routes (Express 4 compatible)
   app.options("*" as string, cors() as express.RequestHandler);
-
   app.use(express.json());
-  app.use(cookieParser());
 
-  // ── Health check ──────────────────────────────────────────────────────────────
+  // ── GET /health ──────────────────────────────────────────────────────────────
   app.get("/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", server: "planda-mcp-server", version: "1.0.0" });
+    res.json({
+      status: "ok",
+      server: "planda-mcp-server",
+      version: "1.0.0",
+      activeSessions: sessionCount(),
+    });
   });
 
-  // ── Static UI files ───────────────────────────────────────────────────────────
-  app.use(express.static(join(__dirname, "../public")));
-
-  // ── ChatKit session — exchanges workflow ID for a client secret ──────────────
-  app.post("/api/create-session", async (req: Request, res: Response) => {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      res.status(500).json({ error: "OPENAI_API_KEY not set" });
+  // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
+  //
+  // Request (her ikisi de desteklenir):
+  //   A) Client-side history (önerilir — server restart'a karşı dayanıklı):
+  //      { "message": "string", "session_id": "uuid", "history": [{role, content}] }
+  //
+  //   B) Server-side session (fallback):
+  //      { "message": "string", "session_id": "uuid | null" }
+  //
+  // Response:
+  //   { "response": "string", "session_id": "uuid" }
+  //
+  // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
+  //          history yoksa → session store'dan yükle
+  //
+  app.post("/v1/assistant/chat", async (req: Request, res: Response) => {
+    if (!process.env.OPENAI_API_KEY) {
+      res.status(500).json({ error: "OPENAI_API_KEY not configured" });
       return;
     }
+
+    const body = req.body as {
+      message?: unknown;
+      session_id?: unknown;
+      history?: unknown;
+      previous_response_id?: unknown;
+    };
+
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    if (!message) {
+      res.status(400).json({ error: "message is required" });
+      return;
+    }
+
+    // session_id: body → header → yeni UUID
+    const sessionId: string =
+      (typeof body.session_id === "string" && body.session_id.trim()
+        ? body.session_id.trim()
+        : null) ??
+      (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
+        ? body.previous_response_id.trim()
+        : null) ??
+      (req.headers["x-session-id"] as string | undefined)?.trim() ??
+      crypto.randomUUID();
+
+    // History kaynağı: client gönderirse onu kullan (server restart'a karşı güvenli)
+    // Gönderilmezse server-side session store'dan yükle
+    let history: import("./sessionStore.js").ChatMessage[];
+
+    const clientHistory = Array.isArray(body.history) ? body.history : null;
+    if (clientHistory) {
+      // Client-side history — validate shape
+      history = clientHistory
+        .filter(
+          (m): m is { role: "user" | "assistant"; content: string } =>
+            m !== null &&
+            typeof m === "object" &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.content === "string"
+        );
+    } else {
+      // Server-side session store fallback (Redis veya in-memory)
+      history = await getHistory(sessionId);
+    }
+
     try {
-      const body = req.body as { workflow?: { id?: string } };
-      const workflowId =
-        body?.workflow?.id ?? process.env.VITE_CHATKIT_WORKFLOW_ID;
-      if (!workflowId) {
-        res.status(400).json({ error: "workflow.id is required" });
-        return;
-      }
+      const { response, updatedHistory } = await runChat({ message, history });
 
-      // Get or create a stable user ID via cookie
-      let userId = req.cookies?.["chatkit_user_id"] as string | undefined;
-      if (!userId) {
-        userId = crypto.randomUUID();
-        res.cookie("chatkit_user_id", userId, {
-          maxAge: 30 * 24 * 60 * 60 * 1000,
-          httpOnly: true,
-          sameSite: "lax",
-        });
-      }
-
-      const apiBase =
-        process.env.CHATKIT_API_BASE ??
-        process.env.VITE_CHATKIT_API_BASE ??
-        "https://api.openai.com";
-      const upstream = await fetch(
-        `${apiBase}/v1/chatkit/sessions`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-            "OpenAI-Beta": "chatkit_beta=v1",
-          },
-          body: JSON.stringify({ workflow: { id: workflowId }, user: userId }),
-        }
+      // Store'u async güncelle — response'u bekletme
+      saveHistory(sessionId, updatedHistory).catch((err) =>
+        console.error("[planda] saveHistory error:", err)
       );
 
-      const data = (await upstream.json()) as Record<string, unknown>;
-      if (!upstream.ok) {
-        res.status(upstream.status).json({ error: (data as { error?: { message?: string } }).error?.message ?? "Upstream error" });
-        return;
-      }
-      res.json(data);
+      res.json({
+        response,
+        message: response,           // alias
+        session_id: sessionId,
+        previous_response_id: sessionId, // alias
+      });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      console.error("[planda] /v1/assistant/chat error:", err);
+      res.status(502).json({ error: "Assistant unavailable. Please try again." });
     }
   });
 
-  // ── Chat API — runs OpenAI Agents workflow ────────────────────────────────────
+  // ── POST /v1/assistant/chat/stream — iOS SSE streaming endpoint ──────────────
+  //
+  // @openai/agents token-level streaming'i desteklemez.
+  // Bu endpoint şu stratejiyle en iyi UX'i sağlar:
+  //   1. Anında "status" eventi → iOS spinner/typing gösterir
+  //   2. Agent çalışır (tool calls + LLM)
+  //   3. Yanıt hazır olunca "response" eventi → metin bir seferde gelir
+  //   4. "done" eventi → bağlantı kapanır
+  //
+  // iOS'ta: URLSession + EventSource ile parse edilir.
+  //
+  app.post("/v1/assistant/chat/stream", async (req: Request, res: Response) => {
+    if (!process.env.OPENAI_API_KEY) {
+      res.status(500).json({ error: "OPENAI_API_KEY not configured" });
+      return;
+    }
+
+    const body = req.body as {
+      message?: unknown;
+      session_id?: unknown;
+      history?: unknown;
+      previous_response_id?: unknown;
+    };
+
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    if (!message) {
+      res.status(400).json({ error: "message is required" });
+      return;
+    }
+
+    const sessionId: string =
+      (typeof body.session_id === "string" && body.session_id.trim()
+        ? body.session_id.trim()
+        : null) ??
+      (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
+        ? body.previous_response_id.trim()
+        : null) ??
+      (req.headers["x-session-id"] as string | undefined)?.trim() ??
+      crypto.randomUUID();
+
+    // SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Nginx proxy buffering'i kapat
+    res.flushHeaders();
+
+    // Anında "status" eventi — kullanıcı boş ekran görmez
+    sseWrite(res, "status", { message: "Terapistler aranıyor..." });
+
+    try {
+      const clientHistory = Array.isArray(body.history) ? body.history : null;
+      let history: import("./sessionStore.js").ChatMessage[];
+      if (clientHistory) {
+        history = clientHistory.filter(
+          (m): m is { role: "user" | "assistant"; content: string } =>
+            m !== null &&
+            typeof m === "object" &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.content === "string"
+        );
+      } else {
+        history = await getHistory(sessionId);
+      }
+
+      const { response, updatedHistory } = await runChat({ message, history });
+
+      saveHistory(sessionId, updatedHistory).catch((err) =>
+        console.error("[planda] saveHistory error:", err)
+      );
+
+      // Yanıtı SSE eventi olarak gönder
+      sseWrite(res, "response", {
+        response,
+        message: response,
+        session_id: sessionId,
+        previous_response_id: sessionId,
+      });
+
+      sseWrite(res, "done", { session_id: sessionId });
+    } catch (err) {
+      console.error("[planda] /v1/assistant/chat/stream error:", err);
+      sseWrite(res, "error", { error: "Assistant unavailable. Please try again." });
+    } finally {
+      res.end();
+    }
+  });
+
+  // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
   app.post("/api/chat", async (req: Request, res: Response) => {
+    if (!process.env.OPENAI_API_KEY) {
+      res.status(500).json({ error: "OPENAI_API_KEY not configured" });
+      return;
+    }
+
     const { message, history } = req.body as {
       message: string;
       history?: { role: "user" | "assistant"; content: string }[];
     };
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(500).json({ error: "OPENAI_API_KEY not set" });
+
+    if (!message) {
+      res.status(400).json({ error: "message is required" });
       return;
     }
+
     try {
       const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
       const text = (result as { output_text?: string }).output_text ?? JSON.stringify(result);
       res.json({ response: text });
-    } catch (err: unknown) {
-      console.log("[planda-mcp-server] /api/chat error:", err);
+    } catch (err) {
+      console.error("[planda] /api/chat error:", err);
       res.status(502).json({ error: String(err) });
     }
   });
 
-  // ── Root → serve UI ───────────────────────────────────────────────────────────
-  app.get("/", (_req: Request, res: Response) => {
-    res.sendFile(join(__dirname, "../public/index.html"));
-  });
-
-  // ── MCP endpoint — POST (JSON-RPC) ────────────────────────────────────────────
-  // Each request gets its own McpServer + transport instance (stateless mode).
-  // SDK 1.x throws "Already connected" if connect() is called twice on the same
-  // server instance, so we must create a fresh server per request.
+  // ── POST /mcp — MCP JSON-RPC ─────────────────────────────────────────────────
   app.post("/mcp", async (req: Request, res: Response) => {
     try {
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined, // stateless — no session cookies
-        enableJsonResponse: true,      // return plain JSON, not SSE stream
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
       });
-
-      res.on("close", () => {
-        transport.close().catch(() => {/* ignore close errors */});
-      });
-
+      res.on("close", () => transport.close().catch(() => {}));
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (err) {
-      console.log("[planda-mcp-server] POST /mcp error:", err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Internal server error" });
-      }
+      console.error("[planda] POST /mcp error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // ── MCP endpoint — GET (SSE streaming, required by some MCP clients) ─────────
+  // ── GET /mcp — MCP SSE stream ────────────────────────────────────────────────
   app.get("/mcp", async (req: Request, res: Response) => {
     try {
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
-        enableJsonResponse: false, // SSE mode for GET
+        enableJsonResponse: false,
       });
-
-      res.on("close", () => {
-        transport.close().catch(() => {/* ignore */});
-      });
-
+      res.on("close", () => transport.close().catch(() => {}));
       await server.connect(transport);
       await transport.handleRequest(req, res);
     } catch (err) {
-      console.log("[planda-mcp-server] GET /mcp error:", err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Internal server error" });
-      }
+      console.error("[planda] GET /mcp error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // ── MCP endpoint — DELETE (session termination) ───────────────────────────────
+  // ── DELETE /mcp — session termination ────────────────────────────────────────
   app.delete("/mcp", async (req: Request, res: Response) => {
     try {
       const server = createMcpServer();
@@ -226,50 +327,47 @@ async function runHttp(): Promise<void> {
       await server.connect(transport);
       await transport.handleRequest(req, res);
     } catch (err) {
-      console.log("[planda-mcp-server] DELETE /mcp error:", err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Internal server error" });
-      }
+      console.error("[planda] DELETE /mcp error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // ── Listen on 0.0.0.0 (required for Hostinger / container envs) ─────────────
+  // ── Listen ───────────────────────────────────────────────────────────────────
   const port = parseInt(process.env.PORT ?? "3000", 10);
   app.listen(port, "0.0.0.0", () => {
-    console.log(
-      `[planda-mcp-server] HTTP server listening on 0.0.0.0:${port}`
-    );
-    console.log(`[planda-mcp-server] MCP endpoint: http://0.0.0.0:${port}/mcp`);
+    console.log(`[planda] HTTP server listening on 0.0.0.0:${port}`);
+    console.log(`[planda] Chat endpoint : POST /v1/assistant/chat`);
+    console.log(`[planda] MCP endpoint  : POST /mcp`);
+    console.log(`[planda] Health check  : GET  /health`);
   });
 }
 
-// ─── Entry point ──────────────────────────────────────────────────────────────
-// Hostinger Node.js hosting: set TRANSPORT=http in environment variables panel.
-// Default is also "http" here since this server is deployed as a web service.
+// ─── Process error handlers ───────────────────────────────────────────────────
 
 process.on("uncaughtException", (err) => {
-  console.log("[planda-mcp-server] Uncaught exception:", err);
+  console.error("[planda] Uncaught exception:", err);
   process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
-  console.log("[planda-mcp-server] Unhandled rejection:", reason);
+  console.error("[planda] Unhandled rejection:", reason);
   process.exit(1);
 });
 
-console.log("[planda-mcp-server] Starting up...");
-console.log("[planda-mcp-server] Node version:", process.version);
-console.log("[planda-mcp-server] PORT env:", process.env.PORT);
+// ─── Entry point ──────────────────────────────────────────────────────────────
+
+console.log("[planda] Starting up — Node", process.version);
+console.log("[planda] PORT:", process.env.PORT ?? "3000 (default)");
 
 const transportMode = (process.env.TRANSPORT ?? "http").toLowerCase();
 
 if (transportMode === "stdio") {
-  runStdio().catch((err: unknown) => {
-    console.log("[planda-mcp-server] Fatal error:", err);
+  runStdio().catch((err) => {
+    console.error("[planda] Fatal:", err);
     process.exit(1);
   });
 } else {
-  runHttp().catch((err: unknown) => {
-    console.log("[planda-mcp-server] Fatal error:", err);
+  runHttp().catch((err) => {
+    console.error("[planda] Fatal:", err);
     process.exit(1);
   });
 }
