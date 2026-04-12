@@ -28,8 +28,33 @@ import { runWorkflow, runChat } from "./workflow.js";
 import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
 import { makeApiRequest } from "./services/apiClient.js";
 // ─── Expert tag enrichment ────────────────────────────────────────────────────
-// If the agent outputs [[expert:slug]] with no preceding text, automatically
-// prepend the therapist's name, fee, and location so the iOS card shows content.
+// Guarantees [[expert:slug]] always has preceding text.
+// If the agent outputs a bare tag (or a wrong slug derived from the name),
+// fetch all therapists and find by slug OR by name similarity.
+/** Normalise Turkish text for fuzzy matching (ş→s, ğ→g, ü→u, ö→o, ı→i, ç→c) */
+function normTR(s) {
+    return s
+        .toLowerCase()
+        .replace(/ş/g, "s").replace(/ğ/g, "g").replace(/ü/g, "u")
+        .replace(/ö/g, "o").replace(/ı/g, "i").replace(/ç/g, "c")
+        .replace(/[^a-z0-9 ]/g, "");
+}
+function findTherapist(therapists, slug) {
+    // 1. Exact username match
+    const exact = therapists.find((t) => t.username === slug);
+    if (exact)
+        return exact;
+    // 2. Slug may be derived from name (agent violated SLUG KURALI).
+    //    Try matching the normalised slug against normalised full names.
+    const slugNorm = normTR(slug.replace(/[-_]/g, " "));
+    return therapists.find((t) => {
+        const fullName = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
+        const nameNorm = normTR(fullName);
+        // Accept if slug words are all present in the name (or vice versa)
+        const slugWords = slugNorm.split(" ").filter(Boolean);
+        return slugWords.length > 0 && slugWords.every((w) => nameNorm.includes(w));
+    });
+}
 async function enrichBareExpertTags(text) {
     const tagPattern = /\[\[expert:([^\]]+)\]\]/g;
     const tags = [...text.matchAll(tagPattern)];
@@ -50,9 +75,12 @@ async function enrichBareExpertTags(text) {
         return text; // silently fall back to original
     }
     const enriched = text.replace(tagPattern, (_match, slug) => {
-        const t = therapists.find((th) => th.username === slug);
+        const t = findTherapist(therapists, slug);
         if (!t)
             return _match;
+        // If agent used a wrong slug, replace with the real username so iOS finds it
+        const realSlug = t.username ?? slug;
+        const correctTag = `[[expert:${realSlug}]]`;
         const name = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
         const title = t.data?.title?.name ?? "";
         const fees = (t.services ?? [])
@@ -71,7 +99,7 @@ async function enrichBareExpertTags(text) {
             lines.push(`Ücret: ${fees.join(" | ")}`);
         if (location)
             lines.push(`Görüşme: ${location}`);
-        return lines.join("\n") + "\n" + _match;
+        return lines.join("\n") + "\n" + correctTag;
     });
     return enriched;
 }
