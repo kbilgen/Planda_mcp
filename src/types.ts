@@ -137,6 +137,42 @@ export interface TherapistListResponse {
   [key: string]: unknown;
 }
 
+// ─── Chat API types ───────────────────────────────────────────────────────────
+
+/** A therapist summary card sent to iOS */
+export interface TherapistCard {
+  id: number;
+  name: string;
+  title?: string | null;
+  specialties: string[];
+  fee?: number | null;
+  city?: string | null;
+  isOnline: boolean;
+  profileUrl: string;
+  photo?: string | null;
+}
+
+/** A quick-reply button sent to iOS when the assistant asks a question */
+export interface QuickReply {
+  label: string;  // Button label shown to user — e.g. "Online"
+  value: string;  // Value sent as next message — e.g. "online"
+}
+
+/** Structured response envelope — iOS renders each field differently */
+export interface ChatResponse {
+  text: string;
+  cards?: TherapistCard[] | null;
+  quickReplies?: QuickReply[] | null;
+  crisis?: boolean | null;
+  outOfScope?: boolean | null;
+}
+
+/** Request body for POST /api/chat */
+export interface ChatRequest {
+  message: string;
+  sessionId: string;
+}
+
 /** Normalised, pagination-aware output shape returned by tools */
 export interface TherapistListOutput {
   total: number;
