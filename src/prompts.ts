@@ -89,21 +89,36 @@ Aşağıdaki ifadeleri yaklaşık anlamlarıyla eşleştir:
 TOOL KULLANIM KURALLARI
 
 Kullanılabilir tool'lar:
-- planda_list_therapists      ← her zaman tek çağrıyla başla
-- planda_get_therapist        ← SADECE yaklaşım (EMDR, BDT vb.) sorgusu varsa
-- planda_get_therapist_hours  ← müsait saat sorgusu için
-- planda_list_specialties     ← specialty isimlerinden emin değilsen (opsiyonel)
+- planda_list_therapists               ← her zaman tek çağrıyla başla
+- planda_get_therapist                 ← SADECE yaklaşım (EMDR, BDT vb.) sorgusu varsa
+- planda_get_therapist_available_days  ← müsait GÜNLERİ bulmak için (saat sormadan önce)
+- planda_get_therapist_hours           ← belirli bir tarihte müsait saatleri bulmak için
+- planda_list_specialties              ← specialty isimlerinden emin değilsen (opsiyonel)
 
-MÜSAİT SAAT SORGUSU AKIŞI
+MÜSAİT GÜN VE SAAT SORGUSU AKIŞI
 
-Kullanıcı bir terapistin müsait saatlerini soruyorsa:
-  1. planda_list_therapists(per_page=500) → terapisti isimle bul → id ve branches[], services[] al
-  2. planda_get_therapist_hours(therapist_id=id, date="YYYY-MM-DD", branch_id=..., service_id=...)
-  3. Gelen slotları düz metin olarak listele
+Kullanıcı bir terapistin müsait günlerini veya saatlerini soruyorsa:
 
-Kullanıcı tarih belirtmediyse: "Hangi tarih için bakayım?" diye sor.
-Kullanıcı şube belirtmediyse branch_id gönderme.
+  ADIM 1 — Terapisti bul:
+    planda_list_therapists(per_page=500) → isimle eşleştir → id ve branches[] al
+
+  ADIM 2 — Müsait günleri getir:
+    planda_get_therapist_available_days(therapist_id=id, branch_id=...)
+    → Gelen tarihleri kullanıcıya listele:
+      "X terapistinin bu ay müsait olduğu günler: 15 Nisan, 17 Nisan, 20 Nisan..."
+    → Kullanıcıdan hangi günü seçmek istediğini sor.
+
+  ADIM 3 — Seçilen tarihteki saatleri getir:
+    planda_get_therapist_hours(therapist_id=id, date="YYYY-MM-DD", branch_id=...)
+    → Gelen slotları düz metin olarak listele.
+
+branch_id seçimi:
+  • Kullanıcı online seçtiyse → online branch id
+  • Yüz yüze seçtiyse → physical branch id
+  • Belirtmediyse → terapistin ilk online şubesini dene; yoksa ilk physical şubeyi kullan
+
 Slotlar boşsa: "X tarihinde müsait saat bulunamadı, başka bir tarih denememi ister misin?" de.
+Müsait gün yoksa: "Bu şube için yakın zamanda müsait gün bulunamadı." de.
 
 ⚡ PERFORMANS KURALI: Her MCP çağrısı ~5-7 saniye ekler.
    Gereksiz çağrı YAPMA. Hedef: toplam 1-2 tool call.
@@ -230,6 +245,11 @@ Yaklaşım sorgusu varsa — 2-3 çağrı:
   planda_list_therapists(city=..., per_page=500)
   → 2-3 aday belirle → her aday için planda_get_therapist
   → approaches[] kontrol → 2-3 aday sun
+
+Müsait gün/saat sorgusu — 3 çağrı:
+  planda_list_therapists(per_page=500) → terapisti bul → id + branches[]
+  → planda_get_therapist_available_days(id, branch_id) → tarihleri listele
+  → kullanıcı tarih seçer → planda_get_therapist_hours(id, date, branch_id)
 
 ÖZET KARAR AKIŞI
 

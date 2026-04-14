@@ -475,5 +475,78 @@ Returns:
             return { content: [{ type: "text", text: handleApiError(error) }] };
         }
     });
+    // ── 5. planda_get_therapist_available_days ───────────────────────────────────
+    const AvailableDaysInputSchema = z
+        .object({
+        therapist_id: z
+            .union([z.string(), z.number()])
+            .describe("The therapist's unique ID (from planda_list_therapists)"),
+        branch_id: z
+            .union([z.string(), z.number()])
+            .describe("Branch ID (from therapist's branches[].id — use physical branch for in-person, online branch for online sessions)"),
+    })
+        .strict();
+    server.registerTool("planda_get_therapist_available_days", {
+        title: "Get Therapist Available Days",
+        description: `Returns the dates (days) on which a therapist has availability at a specific branch.
+
+Use this BEFORE planda_get_therapist_hours to find which days have open slots.
+
+Workflow:
+  1. planda_list_therapists → find therapist by name → get id and branches[]
+  2. planda_get_therapist_available_days(therapist_id, branch_id) → get available dates
+  3. planda_get_therapist_hours(therapist_id, date, branch_id) → get hours for a specific date
+
+Args:
+  - therapist_id: therapist's numeric id
+  - branch_id: branch id from therapist's branches[] array
+    • Use physical branch id for in-person sessions
+    • Use online branch id for online sessions
+
+Returns:
+  List of available dates (YYYY-MM-DD format).`,
+        inputSchema: AvailableDaysInputSchema,
+        annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+        },
+    }, async (params) => {
+        try {
+            const raw = await makeApiRequest(`marketplace/therapists/${params.therapist_id}/branches/${params.branch_id}/days`, "GET");
+            // Normalise — API may return array or { data: [...] } or { days: [...] }
+            const days = Array.isArray(raw)
+                ? raw
+                : Array.isArray(raw.data)
+                    ? raw.data
+                    : Array.isArray(raw.days)
+                        ? raw.days
+                        : [];
+            if (!days.length) {
+                return {
+                    content: [{ type: "text", text: "Bu şube için müsait gün bulunamadı." }],
+                    structuredContent: { days: [] },
+                };
+            }
+            const lines = ["# Müsait Günler", ""];
+            days.forEach((day) => {
+                // Day may be a string ("2025-05-20") or an object { date: "..." }
+                const dateStr = typeof day === "string"
+                    ? day
+                    : (day["date"] ??
+                        day["day"] ??
+                        JSON.stringify(day));
+                lines.push(`- ${dateStr}`);
+            });
+            return {
+                content: [{ type: "text", text: lines.join("\n") }],
+                structuredContent: { days },
+            };
+        }
+        catch (error) {
+            return { content: [{ type: "text", text: handleApiError(error) }] };
+        }
+    });
 }
 //# sourceMappingURL=therapists.js.map
