@@ -30,6 +30,70 @@ import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
 import { makeApiRequest } from "./services/apiClient.js";
 import type { TherapistListResponse, Therapist } from "./types.js";
 
+// ─── Turkish character normalisation ─────────────────────────────────────────
+
+function normTR(s: string): string {
+  return s.toLowerCase()
+    .replace(/ş/g, "s").replace(/ğ/g, "g").replace(/ü/g, "u")
+    .replace(/ö/g, "o").replace(/ı/g, "i").replace(/ç/g, "c")
+    .replace(/[^a-z0-9 ]/g, "");
+}
+
+// ─── Inject missing [[expert:slug]] tags into recommendation blocks ───────────
+// If the agent writes **Name** — Title blocks WITHOUT [[expert:slug]] tags,
+// auto-inject them by fuzzy-matching the name against the therapist list.
+
+async function injectMissingExpertTags(text: string): Promise<string> {
+  if (!/\*\*[^*\n]+\*\*\s*—/.test(text)) return text;     // no bold headers
+  if (/\[\[expert:[^\]]+\]\]/.test(text)) return text;     // tags already present
+
+  let therapists: Therapist[] = [];
+  try {
+    const raw = await makeApiRequest<TherapistListResponse>(
+      "marketplace/therapists", "GET", undefined, { per_page: 500 }
+    );
+    therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
+  } catch {
+    return text;
+  }
+
+  const headerPattern = /\*\*([^*\n]+)\*\*\s*—[^\n]*/g;
+  const insertions: Array<{ pos: number; tag: string }> = [];
+
+  let m: RegExpExecArray | null;
+  while ((m = headerPattern.exec(text)) !== null) {
+    const rawName = m[1].trim();
+    const normName = normTR(rawName);
+    const words = normName.split(/\s+/).filter(Boolean);
+
+    const therapist = therapists.find((t) => {
+      const full = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
+      const normFull = normTR(full);
+      return words.length > 0 && words.every((w) => normFull.includes(w));
+    });
+    if (!therapist?.username) continue;
+
+    // Block ends at the next bold header or end of text
+    const afterHeader = text.slice(m.index + m[0].length);
+    const nextIdx = afterHeader.search(/\n\*\*[^*]/);
+    const blockEnd = nextIdx >= 0
+      ? m.index + m[0].length + nextIdx
+      : text.length;
+
+    insertions.push({ pos: blockEnd, tag: `\n[[expert:${therapist.username}]]` });
+  }
+
+  if (insertions.length === 0) return text;
+
+  // Apply from back to front so earlier positions aren't shifted
+  insertions.sort((a, b) => b.pos - a.pos);
+  let result = text;
+  for (const { pos, tag } of insertions) {
+    result = result.slice(0, pos) + tag + result.slice(pos);
+  }
+  return result;
+}
+
 // ─── Expert tag enrichment ────────────────────────────────────────────────────
 // If the agent outputs [[expert:slug]] with no preceding text, automatically
 // prepend the therapist's name, fee, and location so the iOS card shows content.
@@ -84,6 +148,12 @@ async function enrichBareExpertTags(text: string): Promise<string> {
   });
 
   return enriched;
+}
+
+// ─── Combined post-processing ─────────────────────────────────────────────────
+
+async function postProcessResponse(text: string): Promise<string> {
+  return enrichBareExpertTags(await injectMissingExpertTags(text));
 }
 
 // ─── SSE helper ───────────────────────────────────────────────────────────────
@@ -207,7 +277,7 @@ async function runHttp(): Promise<void> {
 
     try {
       const { response: rawResponse, updatedHistory } = await runChat({ message, history });
-      const response = await enrichBareExpertTags(rawResponse);
+      const response = await postProcessResponse(rawResponse);
 
       // Store'u async güncelle — response'u bekletme
       saveHistory(sessionId, updatedHistory).catch((err) =>
@@ -292,7 +362,7 @@ async function runHttp(): Promise<void> {
       }
 
       const { response: rawResponse2, updatedHistory } = await runChat({ message, history });
-      const response = await enrichBareExpertTags(rawResponse2);
+      const response = await postProcessResponse(rawResponse2);
 
       saveHistory(sessionId, updatedHistory).catch((err) =>
         console.error("[planda] saveHistory error:", err)
@@ -335,7 +405,7 @@ async function runHttp(): Promise<void> {
     try {
       const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
       const rawText = (result as { output_text?: string }).output_text ?? JSON.stringify(result);
-      const text = await enrichBareExpertTags(rawText);
+      const text = await postProcessResponse(rawText);
       res.json({ response: text });
     } catch (err) {
       console.error("[planda] /api/chat error:", err);
