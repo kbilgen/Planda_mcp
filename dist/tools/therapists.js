@@ -391,5 +391,89 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
             return { content: [{ type: "text", text: handleApiError(error) }] };
         }
     });
+    // ── 4. planda_get_therapist_hours ────────────────────────────────────────────
+    const HoursInputSchema = z
+        .object({
+        therapist_id: z
+            .union([z.string(), z.number()])
+            .describe("The therapist's unique ID (from planda_list_therapists or planda_get_therapist)"),
+        date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .describe("Date to check availability for, in YYYY-MM-DD format (e.g. 2025-05-20)"),
+        branch_id: z
+            .number()
+            .int()
+            .optional()
+            .describe("Branch ID to filter by location (from branches[].id in therapist data)"),
+        service_id: z
+            .number()
+            .int()
+            .optional()
+            .describe("Service ID to filter by session type (from services[].id in therapist data)"),
+    })
+        .strict();
+    server.registerTool("planda_get_therapist_hours", {
+        title: "Get Therapist Available Hours",
+        description: `Returns available appointment slots for a specific therapist on a given date.
+
+Workflow:
+  1. Call planda_list_therapists to find the therapist by name → get their id.
+  2. Optionally get branch_id from branches[] and service_id from services[].
+  3. Call this tool with therapist_id, date, and optional branch_id / service_id.
+
+Args:
+  - therapist_id: therapist's numeric id
+  - date: YYYY-MM-DD (e.g. "2025-05-20")
+  - branch_id (optional): filter by branch/location
+  - service_id (optional): filter by service type
+
+Returns:
+  List of available time slots for that day.`,
+        inputSchema: HoursInputSchema,
+        annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+        },
+    }, async (params) => {
+        try {
+            const query = { date: params.date };
+            if (params.branch_id !== undefined)
+                query["branch_id"] = params.branch_id;
+            if (params.service_id !== undefined)
+                query["service_id"] = params.service_id;
+            const raw = await makeApiRequest(`marketplace/therapists/${params.therapist_id}/hours`, "GET", undefined, query);
+            // Normalise — API may return array or { data: [...] } or { hours: [...] }
+            const slots = Array.isArray(raw)
+                ? raw
+                : Array.isArray(raw.data)
+                    ? raw.data
+                    : Array.isArray(raw.hours)
+                        ? raw.hours
+                        : [];
+            if (!slots.length) {
+                return {
+                    content: [{ type: "text", text: `${params.date} tarihinde müsait saat bulunamadı.` }],
+                    structuredContent: { date: params.date, slots: [] },
+                };
+            }
+            const lines = [`# Müsait Saatler — ${params.date}`, ""];
+            slots.forEach((slot) => {
+                const s = slot;
+                // Handle common slot shapes: { time }, { start_time }, { start }, { slot }
+                const time = (s["time"] ?? s["start_time"] ?? s["start"] ?? s["slot"] ?? JSON.stringify(s));
+                lines.push(`- ${time}`);
+            });
+            return {
+                content: [{ type: "text", text: lines.join("\n") }],
+                structuredContent: { date: params.date, slots },
+            };
+        }
+        catch (error) {
+            return { content: [{ type: "text", text: handleApiError(error) }] };
+        }
+    });
 }
 //# sourceMappingURL=therapists.js.map

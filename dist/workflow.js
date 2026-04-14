@@ -14,6 +14,7 @@ const mcp = hostedMcpTool({
     allowedTools: [
         "planda_list_therapists",
         "planda_get_therapist",
+        "planda_get_therapist_hours",
     ],
     requireApproval: "never",
     serverUrl: "https://plandamcp-production.up.railway.app/mcp",
