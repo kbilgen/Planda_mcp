@@ -34,86 +34,95 @@ function normTR(s) {
         .replace(/ö/g, "o").replace(/ı/g, "i").replace(/ç/g, "c")
         .replace(/[^a-z0-9 ]/g, "");
 }
-// ─── Inject missing [[expert:slug]] tags into recommendation blocks ───────────
-// If the agent writes **Name** — Title blocks WITHOUT [[expert:slug]] tags,
-// auto-inject them by fuzzy-matching the name against the therapist list.
-async function injectMissingExpertTags(text) {
-    if (!/\*\*[^*\n]+\*\*\s*—/.test(text))
-        return text; // no bold headers
-    if (/\[\[expert:[^\]]+\]\]/.test(text))
-        return text; // tags already present
-    let therapists = [];
-    try {
-        const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, { per_page: 500 });
-        therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
-    }
-    catch {
-        return text;
-    }
-    const headerPattern = /\*\*([^*\n]+)\*\*\s*—[^\n]*/g;
-    const insertions = [];
-    let m;
-    while ((m = headerPattern.exec(text)) !== null) {
-        const rawName = m[1].trim();
-        const normName = normTR(rawName);
-        const words = normName.split(/\s+/).filter(Boolean);
-        const therapist = therapists.find((t) => {
-            const full = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
-            const normFull = normTR(full);
-            return words.length > 0 && words.every((w) => normFull.includes(w));
-        });
-        if (!therapist?.username)
-            continue;
-        // Block ends at the next bold header or end of text
-        const afterHeader = text.slice(m.index + m[0].length);
-        const nextIdx = afterHeader.search(/\n\*\*[^*]/);
-        const blockEnd = nextIdx >= 0
-            ? m.index + m[0].length + nextIdx
-            : text.length;
-        insertions.push({ pos: blockEnd, tag: `\n[[expert:${therapist.username}]]` });
-    }
-    if (insertions.length === 0)
-        return text;
-    // Apply from back to front so earlier positions aren't shifted
-    insertions.sort((a, b) => b.pos - a.pos);
-    let result = text;
-    for (const { pos, tag } of insertions) {
-        result = result.slice(0, pos) + tag + result.slice(pos);
-    }
-    return result;
+/** Find therapist by exact username, or fuzzy-match a name/slug against full_name. */
+function findTherapist(therapists, query) {
+    const exact = therapists.find((t) => t.username === query);
+    if (exact)
+        return exact;
+    const norm = normTR(query.replace(/[-_]/g, " "));
+    const words = norm.split(/\s+/).filter(Boolean);
+    if (!words.length)
+        return undefined;
+    return therapists.find((t) => {
+        const full = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
+        return words.every((w) => normTR(full).includes(w));
+    });
 }
-// ─── Expert tag enrichment ────────────────────────────────────────────────────
-// If the agent outputs [[expert:slug]] with no preceding text, automatically
-// prepend the therapist's name, fee, and location so the iOS card shows content.
-async function enrichBareExpertTags(text) {
-    const tagPattern = /\[\[expert:([^\]]+)\]\]/g;
-    const tags = [...text.matchAll(tagPattern)];
-    if (tags.length === 0)
+// ─── Combined response post-processing ───────────────────────────────────────
+//
+// Single Planda API call; three sequential passes on the agent's text:
+//
+//  Pass 1 — Fix names in **Name** — Title headers
+//    Agent may garble Turkish characters; replace with the API's full_name.
+//
+//  Pass 2 — Inject missing [[expert:username]] tags
+//    If a recommendation block has no tag, add one.
+//
+//  Pass 3 — Fix slugs and enrich bare tags
+//    Wrong slugs → correct API username.
+//    Bare tags (< 60 chars preceding text) → prepend Name / Fee / Location.
+async function postProcessResponse(text) {
+    const hasBoldHeaders = /\*\*[^*\n]+\*\*\s*—/.test(text);
+    const hasExpertTags = /\[\[expert:[^\]]+\]\]/.test(text);
+    if (!hasBoldHeaders && !hasExpertTags)
         return text;
-    // If there's already substantial text before the first tag, leave as-is
-    const firstTagIndex = text.indexOf(tags[0][0]);
-    const textBefore = text.slice(0, firstTagIndex).trim();
-    if (textBefore.length > 60)
-        return text;
-    // Bare tag — enrich with a single list call
     let therapists = [];
     try {
         const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, { per_page: 500 });
         therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
     }
     catch {
-        return text; // silently fall back to original
+        return text;
     }
-    const enriched = text.replace(tagPattern, (_match, slug) => {
-        const t = therapists.find((th) => th.username === slug);
-        if (!t)
-            return _match;
+    let result = text;
+    // ── Pass 1: Correct garbled therapist names in bold headers ──────────────
+    if (hasBoldHeaders) {
+        result = result.replace(/\*\*([^*\n]+)\*\*(\s*—[^\n]*)/g, (_m, rawName, rest) => {
+            const t = findTherapist(therapists, rawName.trim());
+            if (!t)
+                return _m;
+            const correct = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
+            return `**${correct}**${rest}`;
+        });
+    }
+    // ── Pass 2: Inject [[expert:username]] where missing ─────────────────────
+    if (hasBoldHeaders && !/\[\[expert:[^\]]+\]\]/.test(result)) {
+        const headerPat = /\*\*([^*\n]+)\*\*\s*—[^\n]*/g;
+        const insertions = [];
+        let m;
+        while ((m = headerPat.exec(result)) !== null) {
+            const t = findTherapist(therapists, m[1].trim());
+            if (!t?.username)
+                continue;
+            const after = result.slice(m.index + m[0].length);
+            const nextIdx = after.search(/\n\*\*[^*]/);
+            const blockEnd = nextIdx >= 0 ? m.index + m[0].length + nextIdx : result.length;
+            insertions.push({ pos: blockEnd, tag: `\n[[expert:${t.username}]]` });
+        }
+        insertions.sort((a, b) => b.pos - a.pos);
+        for (const { pos, tag } of insertions) {
+            result = result.slice(0, pos) + tag + result.slice(pos);
+        }
+    }
+    // ── Pass 3: Fix wrong slugs; enrich bare [[expert:...]] tags ─────────────
+    const firstTag = result.match(/\[\[expert:[^\]]+\]\]/);
+    if (!firstTag)
+        return result;
+    const isBare = result.slice(0, result.indexOf(firstTag[0])).trim().length <= 60;
+    result = result.replace(/\[\[expert:([^\]]+)\]\]/g, (_m, slug) => {
+        const t = findTherapist(therapists, slug);
+        if (!t?.username)
+            return _m;
+        const correctTag = `[[expert:${t.username}]]`;
+        if (!isBare)
+            return correctTag; // non-bare: only fix the slug
+        // Bare tag: prepend Name / Fee / Location
         const name = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
         const title = t.data?.title?.name ?? "";
         const fees = (t.services ?? [])
             .map((s) => {
-            const raw = s.custom_fee ?? s.fee;
-            return raw ? `${s.name}: ${Math.round(parseFloat(raw)).toLocaleString("tr-TR")} TL` : null;
+            const f = s.custom_fee ?? s.fee;
+            return f ? `${s.name}: ${Math.round(parseFloat(f)).toLocaleString("tr-TR")} TL` : null;
         })
             .filter(Boolean);
         const isOnline = (t.branches ?? []).some((b) => b.type === "online");
@@ -126,13 +135,9 @@ async function enrichBareExpertTags(text) {
             lines.push(`Ücret: ${fees.join(" | ")}`);
         if (location)
             lines.push(`Görüşme: ${location}`);
-        return lines.join("\n") + "\n" + _match;
+        return lines.join("\n") + "\n" + correctTag;
     });
-    return enriched;
-}
-// ─── Combined post-processing ─────────────────────────────────────────────────
-async function postProcessResponse(text) {
-    return enrichBareExpertTags(await injectMissingExpertTags(text));
+    return result;
 }
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 function sseWrite(res, event, data) {
