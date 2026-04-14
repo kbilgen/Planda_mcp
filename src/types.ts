@@ -35,9 +35,12 @@ export interface TherapistData {
   id?: number;
   user_id?: number;
   introduction_letter?: string | null; // HTML — strip before use
-  inform?: string | null;
+  inform?: string | null;              // HTML — session info, fee details
   title?: TherapistTitle;
   other?: TherapistOther;
+  gender?: "female" | "male" | string | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
   undergraduateUniversity?: University | null;
   postgraduateUniversity?: University | null;
   doctorateUniversity?: University | null;
@@ -105,6 +108,8 @@ export interface Therapist {
   username?: string;
   profile_picture?: string | null;
   rating?: number | null;
+  gender?: "female" | "male" | string | null;   // top-level gender field
+  priority?: number | null;
   data?: TherapistData;
   branches?: Branch[];
   services?: Service[];

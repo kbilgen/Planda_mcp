@@ -125,6 +125,7 @@ planda_list_therapists yanıtında gelen alanlar — bunları tool çağrısı y
 Kimlik / Unvan:
   data.title.name         → "Psikolog" / "Uzman Psikolog" / "Psikoterapist" / "Psikolojik Danışman"
   full_name / name+surname → isim araması
+  gender                  → "female" = Kadın, "male" = Erkek (AI-side filtrele — API filtresi yok)
 
 Eğitim:
   data.undergraduateUniversity.name  → lisans üniversitesi ("Boğaziçi", "ODTÜ", "Bilgi" …)
@@ -161,6 +162,8 @@ Biyografi (keyword arama):
   "Kadıköy'de"                → branches[].address içinde "Kadıköy"
   "En yüksek puanlı"          → weighted_rating azalan sıra
   "Psikoterapist"             → data.title.name == "Psikoterapist"
+  "Kadın terapist"            → gender == "female"
+  "Erkek terapist"            → gender == "male"
   "EMDR deneyimi var mı?"     → biyografide "EMDR" ara (kesin için get_therapist çağır)
 
 İSİM + SPESİFİK SORU KURALI (KRİTİK)

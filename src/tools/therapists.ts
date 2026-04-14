@@ -123,6 +123,13 @@ function therapistToMarkdown(t: Therapist, index?: number): string {
   const titleName = t.data?.title?.name;
   if (titleName) lines.push(`**Unvan:** ${titleName}`);
 
+  // Gender — top-level or data.gender
+  const gender = t.gender ?? t.data?.gender;
+  if (gender) {
+    const genderLabel = gender === "female" ? "Kadın" : gender === "male" ? "Erkek" : gender;
+    lines.push(`**Cinsiyet:** ${genderLabel}`);
+  }
+
   // Specialties — now [{id, name}] objects
   const specialties = Array.isArray(t.specialties)
     ? t.specialties.map((s) => (typeof s === "object" && s !== null ? s.name : String(s))).filter(Boolean)
