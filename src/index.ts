@@ -149,7 +149,7 @@ async function postProcessResponse(text: string): Promise<string> {
     const location = [isOnline ? "Online" : null, ...cities].filter(Boolean).join(" / ");
 
     const lines: string[] = [];
-    if (name)        lines.push(`${name}${title ? " — " + title : ""}`);
+    if (name)        lines.push(`**${name}**${title ? " — " + title : ""}`);
     if (fees.length) lines.push(`Ücret: ${fees.join(" | ")}`);
     if (location)    lines.push(`Görüşme: ${location}`);
     return lines.join("\n") + "\n" + correctTag;
