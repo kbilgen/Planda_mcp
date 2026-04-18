@@ -104,19 +104,24 @@ async function postProcessResponse(text) {
             result = result.slice(0, pos) + tag + result.slice(pos);
         }
     }
-    // ── Pass 3: Fix wrong slugs; enrich bare [[expert:...]] tags ─────────────
-    const firstTag = result.match(/\[\[expert:[^\]]+\]\]/);
-    if (!firstTag)
+    // ── Pass 3: Fix wrong slugs; enrich tags that lack card-format context ──────
+    // Each tag is evaluated independently via `offset`:
+    //   • Tag preceded by a **Name** — Title header → card content already present,
+    //     just fix the slug.
+    //   • Tag with no bold header before it (bare tag OR availability text) →
+    //     prepend Name / Fee / Location so iOS card renders correctly.
+    if (!/\[\[expert:[^\]]+\]\]/.test(result))
         return result;
-    const isBare = result.slice(0, result.indexOf(firstTag[0])).trim().length <= 60;
-    result = result.replace(/\[\[expert:([^\]]+)\]\]/g, (_m, slug) => {
+    result = result.replace(/\[\[expert:([^\]]+)\]\]/g, (_m, slug, offset) => {
         const t = findTherapist(therapists, slug);
         if (!t?.username)
             return _m;
         const correctTag = `[[expert:${t.username}]]`;
-        if (!isBare)
-            return correctTag; // non-bare: only fix the slug
-        // Bare tag: prepend Name / Fee / Location
+        // If a bold **Name** — Title header appears anywhere before this tag,
+        // the card content is already formatted → only fix the slug.
+        if (/\*\*[^*\n]+\*\*\s*—/.test(result.slice(0, offset)))
+            return correctTag;
+        // No card-format context → prepend Name / Fee / Location
         const name = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
         const title = t.data?.title?.name ?? "";
         const fees = (t.services ?? [])
