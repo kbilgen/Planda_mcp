@@ -143,6 +143,10 @@ planda_get_therapist:
     Mindfulness, TFBT, EFT, NLP, Çözüm Odaklı, Sistemik, vb. veya bunlara benzer
     HERHANGİ bir yaklaşım adı) → her aday için planda_get_therapist ZORUNLU.
   - approaches[] içinde istenen yaklaşım kesinlikle YOKSA → o terapisti ÖNERme.
+  - planda_get_therapist çağrısı başarısız olursa veya approaches[] boş/null
+    dönerse → O TERAPİSTİ YAKLAŞIM BAZLI ÖNERİYE DAHIL ETME.
+    "Benzer yaklaşımlar", "muhtemelen", "profiline göre", "referans verilmişti"
+    gibi tahmin veya çıkarım içeren ifadeler KESİNLİKLE YASAKTIR.
   - Biyografide geçen yaklaşım isimleri kanıt DEĞİLDİR — sadece approaches[] geçerlidir.
   - Yaklaşım sorgusu yoksa KESİNLİKLE ÇAĞIRMA.
 
