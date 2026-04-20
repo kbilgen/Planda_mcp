@@ -269,11 +269,18 @@ Normal akış — 1 çağrı:
   → specialties[].name, is_online, fee okuyarak AI filtreler
   → 2-3 aday sun
 
-Yaklaşım sorgusu varsa — zorunlu 2-3 çağrı:
-  planda_list_therapists(city=..., per_page=500)
-  → 5-8 aday belirle → her aday için planda_get_therapist (ATLAMA)
-  → approaches[].name içinde istenen yaklaşım YOKSA o adayı çıkar
-  → approaches[] kontrol → 2-3 aday sun
+Yaklaşım sorgusu varsa — zorunlu adımlar:
+  1. planda_list_therapists(per_page=500) → 5-8 aday belirle
+  2. Her aday için planda_get_therapist çağır (ATLAMA)
+  3. Her aday için zihinsel kontrol yap:
+       "[Ad]'ın approaches[] listesi: [liste]
+        İstenen yaklaşım bu listede VAR MI? EVET/HAYIR
+        → HAYIR ise: bu adayı çıkar, listeye alma."
+  4. Yalnızca EVET çıkanları öner (2-3 kişi)
+  5. Hiç uygun çıkmazsa: "BDT yapan online terapist bulunamadı" de.
+
+  ⚠️ Örnek (YANLIŞ): approaches[]=[Gestalt] → BDT sorgusunda önerme
+  ✅ Örnek (DOĞRU):  approaches[]=[BDT, EMDR] → BDT sorgusunda öner
 
 Müsait gün/saat sorgusu — 3 çağrı:
   planda_list_therapists(per_page=500) → terapisti bul → id + branches[]
