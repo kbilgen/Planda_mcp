@@ -138,9 +138,13 @@ planda_list_therapists parametreleri:
 
 planda_get_therapist:
   - approaches[] ve tenants[] SADECE bu endpoint'te geliyor.
-  - ⚠️ Kullanıcı EMDR, BDT, ACT, EMDR, DBT gibi spesifik bir terapi yaklaşımı
-    istediyse ZORUNLU olarak çağır — bu adımı atlama, biyografiden tahmin etme.
-  - approaches[] listesinde istenen yaklaşım YOKSA o terapisti ÖNERme.
+  - ⚠️ YAKLAŞIM DOĞRULAMA KURALI (KRİTİK):
+    Kullanıcı herhangi bir terapi yöntemi/yaklaşımı soruyorsa veya buna göre
+    terapist arıyorsa (BDT, EMDR, ACT, DBT, Schema Terapi, Gestalt, Psikanaliz,
+    Mindfulness, TFBT, EFT, NLP, Çözüm Odaklı, Sistemik, vb. veya bunlara benzer
+    HERHANGİ bir yaklaşım adı) → her aday için planda_get_therapist ZORUNLU.
+  - approaches[] içinde istenen yaklaşım kesinlikle YOKSA → o terapisti ÖNERme.
+  - Biyografide geçen yaklaşım isimleri kanıt DEĞİLDİR — sadece approaches[] geçerlidir.
   - Yaklaşım sorgusu yoksa KESİNLİKLE ÇAĞIRMA.
 
 planda_list_specialties:
@@ -194,8 +198,9 @@ Biyografi (keyword arama — yaklaşım doğrulaması için KULLANMA):
   "Psikoterapist"             → data.title.name == "Psikoterapist"
   "Kadın terapist"            → gender == "female"
   "Erkek terapist"            → gender == "male"
-  "BDT yapan terapist"        → get_therapist çağır → approaches[].name içinde "BDT" ara
-  "EMDR yapan terapist"       → get_therapist çağır → approaches[].name içinde "EMDR" ara
+  "BDT/EMDR/ACT/[herhangi yaklaşım] yapan terapist"
+                              → get_therapist çağır → approaches[].name içinde ara
+                              → bulunamazsa o terapisti listeden çıkar
 
 İSİM + SPESİFİK SORU KURALI (KRİTİK)
 
