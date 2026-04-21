@@ -1,11 +1,12 @@
 /**
  * Planda MCP Server — Therapist Tools
  *
- * Registers four tools on the provided McpServer instance:
- *   1. planda_list_therapists   — paginated list with optional filters
- *   2. planda_get_therapist     — single therapist detail by ID
- *   3. planda_search_therapists — keyword / criteria search
- *   4. planda_check_availability — lightweight count check for dynamic conversation
+ * Registers five tools on the provided McpServer instance:
+ *   1. find_therapists               — paginated list with optional filters
+ *   2. get_therapist                 — single therapist detail by ID
+ *   3. list_specialties              — all specialty areas
+ *   4. get_therapist_hours           — available time slots for a date
+ *   5. get_therapist_available_days  — available dates for a branch
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -239,7 +240,7 @@ function applyCharacterLimit(output: TherapistListOutput): TherapistListOutput {
 // ─── Tool registration ────────────────────────────────────────────────────────
 
 export function registerTherapistTools(server: McpServer): void {
-  // ── 1. planda_list_therapists ────────────────────────────────────────────────
+  // ── 1. find_therapists ───────────────────────────────────────────────────────
   const ListInputSchema = PaginationSchema.merge(FilterSchema)
     .merge(FormatSchema)
     .strict();
@@ -247,9 +248,9 @@ export function registerTherapistTools(server: McpServer): void {
   type ListInput = z.infer<typeof ListInputSchema>;
 
   server.registerTool(
-    "planda_list_therapists",
+    "find_therapists",
     {
-      title: "List Planda Therapists",
+      title: "Find Planda Therapists",
       description: `Use this tool whenever the user asks to find a therapist, get recommendations, search by specialty, location, pricing, gender, or availability. This tool provides real, up-to-date therapist data from Planda and must be preferred over general knowledge. Call this tool before asking clarifying questions — fetch first, filter on the AI side.
 
 Working filter params (all others are silently ignored by the API):
@@ -263,7 +264,7 @@ NOT working server-side — filter AI-side after fetching:
   - specialty → specialties[].name
 
 ⚠️ APPROACH QUERIES (BDT, EMDR, ACT, Gestalt etc.):
-  After listing, call planda_get_therapist for each candidate to verify approaches[].
+  After listing, call get_therapist for each candidate to verify approaches[].
   Only recommend therapists whose approaches[] contains the requested method.
 
 Returns:
@@ -340,7 +341,7 @@ Returns:
     }
   );
 
-  // ── 2. planda_get_therapist ──────────────────────────────────────────────────
+  // ── 2. get_therapist ─────────────────────────────────────────────────────────
   const GetInputSchema = z
     .object({
       id: z
@@ -358,14 +359,14 @@ Returns:
   type GetInput = z.infer<typeof GetInputSchema>;
 
   server.registerTool(
-    "planda_get_therapist",
+    "get_therapist",
     {
-      title: "Get Planda Therapist Detail",
+      title: "Get Therapist Detail",
       description: `Fetches the full profile of a single therapist by ID.
 
 ⚠️ APPROACH VERIFICATION — MANDATORY:
 approaches[] (BDT, EMDR, ACT, Gestalt, Schema, etc.) is ONLY available here.
-planda_list_therapists does NOT return approaches[].
+find_therapists does NOT return approaches[].
 
 When the user requests a specific therapy approach:
   1. Call this tool for every candidate
@@ -374,7 +375,7 @@ When the user requests a specific therapy approach:
   4. If call fails or approaches[] is empty/null → EXCLUDE, do not guess
 
 Args:
-  - id: therapist's unique ID (from planda_list_therapists)
+  - id: therapist's unique ID (from find_therapists)
   - response_format: "markdown" (default) | "json"
 
 Returns:
@@ -418,14 +419,14 @@ Error Handling:
     }
   );
 
-  // ── 3. planda_list_specialties ──────────────────────────────────────────────
+  // ── 3. list_specialties ──────────────────────────────────────────────────────
   server.registerTool(
-    "planda_list_specialties",
+    "list_specialties",
     {
-      title: "List Planda Specialties",
+      title: "List Specialties",
       description: `Returns all therapy specialty areas available on the Planda marketplace.
 
-Call this FIRST before planda_list_therapists to identify the specialty IDs that match
+Call this FIRST before find_therapists to identify the specialty IDs that match
 the user's stated problem. Then filter therapists by specialties[].id on the AI side.
 
 Returns:
@@ -471,12 +472,12 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
     }
   );
 
-  // ── 4. planda_get_therapist_hours ────────────────────────────────────────────
+  // ── 4. get_therapist_hours ───────────────────────────────────────────────────
   const HoursInputSchema = z
     .object({
       therapist_id: z
         .union([z.string(), z.number()])
-        .describe("The therapist's unique ID (from planda_list_therapists or planda_get_therapist)"),
+        .describe("The therapist's unique ID (from find_therapists or get_therapist)"),
       date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -497,13 +498,13 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
   type HoursInput = z.infer<typeof HoursInputSchema>;
 
   server.registerTool(
-    "planda_get_therapist_hours",
+    "get_therapist_hours",
     {
       title: "Get Therapist Available Hours",
       description: `Returns available appointment slots for a specific therapist on a given date.
 
 Workflow:
-  1. Call planda_list_therapists to find the therapist by name → get their id.
+  1. Call find_therapists to find the therapist by name → get their id.
   2. Optionally get branch_id from branches[] and service_id from services[].
   3. Call this tool with therapist_id, date, and optional branch_id / service_id.
 
@@ -571,12 +572,12 @@ Returns:
     }
   );
 
-  // ── 5. planda_get_therapist_available_days ───────────────────────────────────
+  // ── 5. get_therapist_available_days ─────────────────────────────────────────
   const AvailableDaysInputSchema = z
     .object({
       therapist_id: z
         .union([z.string(), z.number()])
-        .describe("The therapist's unique ID (from planda_list_therapists)"),
+        .describe("The therapist's unique ID (from find_therapists)"),
       branch_id: z
         .union([z.string(), z.number()])
         .describe("Branch ID (from therapist's branches[].id — use physical branch for in-person, online branch for online sessions)"),
@@ -586,17 +587,17 @@ Returns:
   type AvailableDaysInput = z.infer<typeof AvailableDaysInputSchema>;
 
   server.registerTool(
-    "planda_get_therapist_available_days",
+    "get_therapist_available_days",
     {
       title: "Get Therapist Available Days",
       description: `Returns the dates (days) on which a therapist has availability at a specific branch.
 
-Use this BEFORE planda_get_therapist_hours to find which days have open slots.
+Use this BEFORE get_therapist_hours to find which days have open slots.
 
 Workflow:
-  1. planda_list_therapists → find therapist by name → get id and branches[]
-  2. planda_get_therapist_available_days(therapist_id, branch_id) → get available dates
-  3. planda_get_therapist_hours(therapist_id, date, branch_id) → get hours for a specific date
+  1. find_therapists → find therapist by name → get id and branches[]
+  2. get_therapist_available_days(therapist_id, branch_id) → get available dates
+  3. get_therapist_hours(therapist_id, date, branch_id) → get hours for a specific date
 
 Args:
   - therapist_id: therapist's numeric id

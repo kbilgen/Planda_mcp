@@ -1,11 +1,12 @@
 /**
  * Planda MCP Server — Therapist Tools
  *
- * Registers four tools on the provided McpServer instance:
- *   1. planda_list_therapists   — paginated list with optional filters
- *   2. planda_get_therapist     — single therapist detail by ID
- *   3. planda_search_therapists — keyword / criteria search
- *   4. planda_check_availability — lightweight count check for dynamic conversation
+ * Registers five tools on the provided McpServer instance:
+ *   1. find_therapists               — paginated list with optional filters
+ *   2. get_therapist                 — single therapist detail by ID
+ *   3. list_specialties              — all specialty areas
+ *   4. get_therapist_hours           — available time slots for a date
+ *   5. get_therapist_available_days  — available dates for a branch
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 export declare function registerTherapistTools(server: McpServer): void;

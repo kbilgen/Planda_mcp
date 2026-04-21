@@ -16,10 +16,10 @@ import type { ChatMessage } from "./sessionStore.js";
 const mcp = hostedMcpTool({
   serverLabel: "Kaan_mcp",
   allowedTools: [
-    "planda_list_therapists",
-    "planda_get_therapist",
-    "planda_get_therapist_hours",
-    "planda_get_therapist_available_days",
+    "find_therapists",
+    "get_therapist",
+    "get_therapist_hours",
+    "get_therapist_available_days",
   ],
   requireApproval: "never",
   serverUrl: "https://plandamcp-production.up.railway.app/mcp",
