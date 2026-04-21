@@ -302,21 +302,28 @@ Returns:
         .strict();
     server.registerTool("planda_get_therapist", {
         title: "Get Planda Therapist Detail",
-        description: `Fetches the full profile of a single therapist from the Planda marketplace by their unique ID.
+        description: `Fetches the full profile of a single therapist by ID.
+
+⚠️ APPROACH VERIFICATION — MANDATORY:
+approaches[] (BDT, EMDR, ACT, Gestalt, Schema, etc.) is ONLY available here.
+planda_list_therapists does NOT return approaches[].
+
+When the user requests a specific therapy approach:
+  1. Call this tool for every candidate
+  2. Check approaches[].name — requested approach NOT in list → EXCLUDE therapist
+  3. NEVER recommend for an approach query without confirming via approaches[]
+  4. If call fails or approaches[] is empty/null → EXCLUDE, do not guess
 
 Args:
-  - id (string | number): The therapist's unique identifier
-  - response_format ("markdown" | "json"): Output format (default: "markdown")
+  - id: therapist's unique ID (from planda_list_therapists)
+  - response_format: "markdown" (default) | "json"
 
 Returns:
-  Complete therapist profile including name, specialties, location, pricing, rating, bio, education, and age range.
-
-Examples:
-  - "Show me details for therapist 42" → id=42
-  - "Get the profile of therapist abc-123" → id="abc-123"
+  approaches[], tenants[], specialties, bio, education, pricing, location, rating.
 
 Error Handling:
-  - Returns "Error: Resource not found" if the ID doesn't exist`,
+  - "Error: Resource not found" if ID doesn't exist
+  - On any error for approach queries → exclude this therapist`,
         inputSchema: GetInputSchema,
         annotations: {
             readOnlyHint: true,
