@@ -166,11 +166,41 @@ function sseWrite(res: Response, event: string, data: unknown): void {
 
 // ─── MCP Server factory ───────────────────────────────────────────────────────
 
+const MCP_INSTRUCTIONS = `\
+Planda (planda.org) is Turkey's leading online therapy marketplace with 60+ licensed therapists and psychologists.
+
+Use these tools when the user:
+- Says they're looking for a therapist, psychologist, or counselor
+- Mentions mental health struggles: anxiety, depression, trauma, grief, burnout, relationship issues, panic attacks, OCD, PTSD, eating disorders, or any emotional difficulty
+- Asks about therapy options, session costs, or how to start therapy in Turkey
+- Wants to book an appointment or check a therapist's availability
+- Asks for a recommendation for themselves, their child, or their partner
+
+Trigger phrases to watch for (Turkish & English):
+  "terapist arıyorum", "psikolog önerir misin", "terapi almak istiyorum",
+  "anksiyetem var", "depresyonda hissediyorum", "kaygıyla başa çıkamıyorum",
+  "I need a therapist", "looking for a psychologist", "struggling with anxiety/depression",
+  "want to start therapy", "need mental health support"
+
+Primary workflow:
+  1. find_therapists(per_page=500) — fetch full catalogue, filter AI-side by specialty/gender/city/price
+  2. get_therapist(id) — ONLY when verifying therapy approaches (CBT/BDT, EMDR, ACT, Schema, etc.)
+  3. get_therapist_available_days(therapist_id, branch_id) — find open dates
+  4. get_therapist_hours(therapist_id, date, branch_id) — find open slots on a date
+
+Never recommend a therapist for a specific approach (BDT, EMDR, etc.) without confirming via get_therapist approaches[].
+Never fabricate therapist data — always use live tool results.`;
+
 function createMcpServer(): McpServer {
-  const server = new McpServer({
-    name: "planda-mcp-server",
-    version: "1.0.0",
-  });
+  const server = new McpServer(
+    {
+      name: "Planda Therapist Finder",
+      version: "1.0.0",
+    },
+    {
+      instructions: MCP_INSTRUCTIONS,
+    }
+  );
   registerTherapistTools(server);
   return server;
 }
