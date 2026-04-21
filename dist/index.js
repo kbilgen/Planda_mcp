@@ -212,6 +212,10 @@ async function runHttp() {
             activeSessions: sessionCount(),
         });
     });
+    // ── GET /.well-known/openai-apps-challenge — ChatGPT domain verification ─────
+    app.get("/.well-known/openai-apps-challenge", (_req, res) => {
+        res.type("text/plain").send("iUHUzIITTYzklgFSG5CV0vUIvi7nACSMFL0DVxLSjdU");
+    });
     // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
     //
     // Request (her ikisi de desteklenir):
