@@ -199,6 +199,22 @@ function applyCharacterLimit(output) {
         truncation_message: `Response truncated from ${output.count} to ${therapists.length} therapists. Use 'page' or add filters to retrieve more results.`,
     };
 }
+// ─── Specialty cache ──────────────────────────────────────────────────────────
+const SPECIALTY_CACHE_TTL_MS = 10 * 60 * 1000;
+let specialtyCache = null;
+async function getCachedSpecialties() {
+    if (specialtyCache && Date.now() - specialtyCache.fetchedAt < SPECIALTY_CACHE_TTL_MS) {
+        return specialtyCache.specialties;
+    }
+    const raw = await makeApiRequest("marketplace/specialties");
+    const specialties = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw.data)
+            ? raw.data
+            : [];
+    specialtyCache = { specialties, fetchedAt: Date.now() };
+    return specialties;
+}
 // ─── Tool registration ────────────────────────────────────────────────────────
 export function registerTherapistTools(server) {
     // ── 1. find_therapists ───────────────────────────────────────────────────────
@@ -293,7 +309,7 @@ Returns per therapist:
             };
         }
         catch (error) {
-            return { content: [{ type: "text", text: handleApiError(error) }] };
+            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
         }
     });
     // ── 2. get_therapist ─────────────────────────────────────────────────────────
@@ -357,7 +373,7 @@ Error Handling:
             };
         }
         catch (error) {
-            return { content: [{ type: "text", text: handleApiError(error) }] };
+            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
         }
     });
     // ── 3. list_specialties ──────────────────────────────────────────────────────
@@ -382,13 +398,7 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
         },
     }, async () => {
         try {
-            const raw = await makeApiRequest("marketplace/specialties");
-            // API may return array directly or wrapped in { data: [...] }
-            const specialties = Array.isArray(raw)
-                ? raw
-                : Array.isArray(raw.data)
-                    ? raw.data
-                    : [];
+            const specialties = await getCachedSpecialties();
             const text = specialties.length
                 ? specialties
                     .map((s) => {
@@ -403,7 +413,7 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
             };
         }
         catch (error) {
-            return { content: [{ type: "text", text: handleApiError(error) }] };
+            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
         }
     });
     // ── 4. get_therapist_hours ───────────────────────────────────────────────────
@@ -487,7 +497,7 @@ Returns:
             };
         }
         catch (error) {
-            return { content: [{ type: "text", text: handleApiError(error) }] };
+            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
         }
     });
     // ── 5. get_therapist_available_days ─────────────────────────────────────────
@@ -560,7 +570,7 @@ Returns:
             };
         }
         catch (error) {
-            return { content: [{ type: "text", text: handleApiError(error) }] };
+            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
         }
     });
 }

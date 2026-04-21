@@ -10,6 +10,7 @@ import { OpenAI } from "openai";
 import { runGuardrails } from "@openai/guardrails";
 import { SYSTEM_PROMPT } from "./prompts.js";
 import type { ChatMessage } from "./sessionStore.js";
+import type { RunStreamEvent } from "@openai/agents";
 
 // ─── MCP Tool ────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,7 @@ const mcp = hostedMcpTool({
   allowedTools: [
     "find_therapists",
     "get_therapist",
+    "list_specialties",
     "get_therapist_hours",
     "get_therapist_available_days",
   ],
@@ -160,6 +162,72 @@ export async function runChat(input: ChatInput): Promise<ChatOutput> {
     ];
 
     return { response: responseText, updatedHistory };
+  });
+}
+
+// ─── runChatStream — /v1/assistant/chat/stream için ──────────────────────────
+
+export interface ChatStreamCallbacks {
+  onStatus?: (message: string) => void;
+  onDelta?: (delta: string) => void;
+}
+
+function toolStatusMessage(toolName: string): string {
+  switch (toolName) {
+    case "find_therapists":            return "Terapistler aranıyor...";
+    case "get_therapist":              return "Terapist profili inceleniyor...";
+    case "get_therapist_hours":        return "Müsait saatler kontrol ediliyor...";
+    case "get_therapist_available_days": return "Müsait günler kontrol ediliyor...";
+    case "list_specialties":           return "Uzmanlık alanları yükleniyor...";
+    default:                           return "Bilgiler alınıyor...";
+  }
+}
+
+export async function runChatStream(
+  input: ChatInput,
+  callbacks: ChatStreamCallbacks
+): Promise<ChatOutput> {
+  return withTrace("PlandaChatStream", async () => {
+    const guard = await checkGuardrails(input.message);
+    if (guard.blocked) {
+      const safeResponse =
+        "Bu konuda sana yardımcı olamıyorum. Uygun bir terapist bulmak için buradayım — devam edelim mi?";
+      callbacks.onDelta?.(safeResponse);
+      return {
+        response: safeResponse,
+        updatedHistory: [
+          ...input.history,
+          { role: "user" as const, content: input.message },
+          { role: "assistant" as const, content: safeResponse },
+        ],
+      };
+    }
+
+    const agentItems = toAgentItems(input.history, input.message);
+    const streamResult = await runner.run(agent, agentItems, { stream: true });
+
+    for await (const event of streamResult as AsyncIterable<RunStreamEvent>) {
+      if (event.type === "run_item_stream_event" && event.name === "tool_called") {
+        const rawItem = event.item.rawItem as { name?: string };
+        callbacks.onStatus?.(toolStatusMessage(rawItem?.name ?? ""));
+      } else if (event.type === "raw_model_stream_event") {
+        const data = event.data as { type?: string; delta?: string };
+        if (data.type === "output_text_delta" && data.delta) {
+          callbacks.onDelta?.(data.delta);
+        }
+      }
+    }
+
+    const responseText = (streamResult.finalOutput as string | undefined) ?? "";
+
+    return {
+      response: responseText,
+      updatedHistory: [
+        ...input.history,
+        { role: "user" as const, content: input.message },
+        { role: "assistant" as const, content: responseText },
+      ],
+    };
   });
 }
 

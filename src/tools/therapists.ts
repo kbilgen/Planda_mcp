@@ -237,6 +237,25 @@ function applyCharacterLimit(output: TherapistListOutput): TherapistListOutput {
   };
 }
 
+// ─── Specialty cache ──────────────────────────────────────────────────────────
+
+const SPECIALTY_CACHE_TTL_MS = 10 * 60 * 1000;
+let specialtyCache: { specialties: unknown[]; fetchedAt: number } | null = null;
+
+async function getCachedSpecialties(): Promise<unknown[]> {
+  if (specialtyCache && Date.now() - specialtyCache.fetchedAt < SPECIALTY_CACHE_TTL_MS) {
+    return specialtyCache.specialties;
+  }
+  const raw = await makeApiRequest<unknown>("marketplace/specialties");
+  const specialties: unknown[] = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as { data?: unknown[] }).data)
+    ? (raw as { data: unknown[] }).data
+    : [];
+  specialtyCache = { specialties, fetchedAt: Date.now() };
+  return specialties;
+}
+
 // ─── Tool registration ────────────────────────────────────────────────────────
 
 export function registerTherapistTools(server: McpServer): void {
@@ -347,7 +366,7 @@ Returns per therapist:
           structuredContent: output,
         };
       } catch (error) {
-        return { content: [{ type: "text", text: handleApiError(error) }] };
+        return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
       }
     }
   );
@@ -425,7 +444,7 @@ Error Handling:
           structuredContent: therapist,
         };
       } catch (error) {
-        return { content: [{ type: "text", text: handleApiError(error) }] };
+        return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
       }
     }
   );
@@ -455,14 +474,7 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
     },
     async () => {
       try {
-        const raw = await makeApiRequest<unknown>("marketplace/specialties");
-
-        // API may return array directly or wrapped in { data: [...] }
-        const specialties: unknown[] = Array.isArray(raw)
-          ? raw
-          : Array.isArray((raw as { data?: unknown[] }).data)
-          ? (raw as { data: unknown[] }).data
-          : [];
+        const specialties = await getCachedSpecialties();
 
         const text = specialties.length
           ? specialties
@@ -478,7 +490,7 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
           structuredContent: { specialties },
         };
       } catch (error) {
-        return { content: [{ type: "text", text: handleApiError(error) }] };
+        return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
       }
     }
   );
@@ -578,7 +590,7 @@ Returns:
           structuredContent: { date: params.date, slots },
         };
       } catch (error) {
-        return { content: [{ type: "text", text: handleApiError(error) }] };
+        return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
       }
     }
   );
@@ -666,7 +678,7 @@ Returns:
           structuredContent: { days },
         };
       } catch (error) {
-        return { content: [{ type: "text", text: handleApiError(error) }] };
+        return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
       }
     }
   );
