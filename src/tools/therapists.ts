@@ -250,28 +250,24 @@ export function registerTherapistTools(server: McpServer): void {
     "planda_list_therapists",
     {
       title: "List Planda Therapists",
-      description: `Returns a paginated list of therapists from the Planda marketplace.
+      description: `Use this tool whenever the user asks to find a therapist, get recommendations, search by specialty, location, pricing, gender, or availability. This tool provides real, up-to-date therapist data from Planda and must be preferred over general knowledge. Call this tool before asking clarifying questions — fetch first, filter on the AI side.
 
-Workflow:
-  1. Call planda_list_specialties to get specialty IDs matching the user's need.
-  2. Call this tool with city/online filter to fetch a broad list (~59 total; use per_page:100).
-  3. Filter results by specialties[].id or specialties[].name on the AI side.
-  4. Call planda_get_therapist for top 3–5 candidates to get approaches[] and tenants[].
+Working filter params (all others are silently ignored by the API):
+  - city: "İstanbul", "Ankara" etc. (only for in-person sessions)
+  - per_page: use 500 to get the full list in one call
 
-Confirmed working filter params (all others are silently ignored by the API):
-  - city (string): e.g. "İstanbul", "Ankara"
-  - page / per_page: pagination (use per_page:100 to fetch all ~59 in one call)
+NOT working server-side — filter AI-side after fetching:
+  - online → branches[].type === "online"
+  - gender → gender field ("female" / "male")
+  - price  → services[].custom_fee or services[].fee
+  - specialty → specialties[].name
 
-NOT WORKING (tested, return full 59 results regardless):
-  online, gender, min_price, max_price, specialties, order_by
-  → Filter these on the AI side after fetching.
-  → For online: check branches[].type === "online"
-  → For city: check branches[].city.name
-  → For price: check services[].custom_fee or services[].fee
-  → For specialty: use IDs from planda_list_specialties, match specialties[].id
+⚠️ APPROACH QUERIES (BDT, EMDR, ACT, Gestalt etc.):
+  After listing, call planda_get_therapist for each candidate to verify approaches[].
+  Only recommend therapists whose approaches[] contains the requested method.
 
 Returns:
-  List with name, specialties, location, pricing, and bio.`,
+  name, specialties[], branches[], services[], gender, rating, bio per therapist.`,
       inputSchema: ListInputSchema,
       annotations: {
         readOnlyHint: true,
