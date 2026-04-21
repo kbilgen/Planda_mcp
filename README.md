@@ -1,57 +1,32 @@
-# planda-mcp-server
+# Planda Therapist Finder — MCP Server
 
-MCP (Model Context Protocol) server for the **Planda Marketplace Therapists API**.
+Real-time therapist search for **Planda** (planda.org), Turkey's leading online therapy marketplace. Any MCP-compatible AI assistant (ChatGPT, Gemini, Claude, etc.) can use this server to find licensed therapists, check availability, and book appointments.
 
-Provides three tools that let any MCP-compatible LLM client (Claude, etc.) query therapist listings at `https://app.planda.org/api/v1/marketplace/therapists`.
-
----
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `planda_list_therapists` | Paginated list with optional filters (specialty, language, city, online, gender, price) |
-| `planda_get_therapist` | Full profile of a single therapist by ID |
-| `planda_search_therapists` | Free-text search across names, bios, and specialties |
+**Live MCP endpoint:** `https://plandamcp-production.up.railway.app/mcp`
 
 ---
 
-## Quick Start
+## What it does
 
-### 1. Install & Build
+When a user says *"I need a therapist"*, *"anksiyetem var"*, or *"depresyonla başa çıkamıyorum"*, the AI calls this server to:
 
-```bash
-npm install
-npm run build
-```
-
-### 2. Run (stdio — for local Claude / MCP clients)
-
-```bash
-node dist/index.js
-```
-
-### 3. Run (HTTP — for remote/multi-client deployments)
-
-```bash
-TRANSPORT=http PORT=3000 node dist/index.js
-```
-
-The MCP endpoint will be available at `http://localhost:3000/mcp`.
+- Search 60+ licensed therapists and psychologists
+- Filter by specialty, city, online/in-person, gender, price, and therapy approach
+- Verify specific approaches (CBT/BDT, EMDR, ACT, Schema, etc.) against live data
+- Check a therapist's available days and appointment slots
 
 ---
 
-## Environment Variables
+## Connect to ChatGPT
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PLANDA_API_KEY` | No | Bearer token for authenticated Planda API calls. Omit for public endpoints. |
-| `TRANSPORT` | No | `stdio` (default) or `http` |
-| `PORT` | No | HTTP server port (default `3000`, only used when `TRANSPORT=http`) |
+1. Open ChatGPT → Settings → Connected apps → **Add MCP server**
+2. Enter the server URL:
+   ```
+   https://plandamcp-production.up.railway.app/mcp
+   ```
+3. Done. ChatGPT will now suggest Planda therapists when you describe mental health struggles.
 
----
-
-## Claude Desktop Integration (stdio)
+## Connect to Claude Desktop
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -59,42 +34,76 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "planda": {
-      "command": "node",
-      "args": ["/absolute/path/to/planda-mcp-server/dist/index.js"],
-      "env": {
-        "PLANDA_API_KEY": "your-token-here"
-      }
+      "type": "http",
+      "url": "https://plandamcp-production.up.railway.app/mcp"
     }
   }
 }
 ```
 
----
+## Connect to Cursor / Windsurf / any MCP client
 
-## Project Structure
+Use the streamable HTTP transport:
 
 ```
-planda-mcp-server/
-├── src/
-│   ├── index.ts                  # Entry point — transport selection
-│   ├── constants.ts              # API_BASE_URL, CHARACTER_LIMIT
-│   ├── types.ts                  # TypeScript interfaces & ResponseFormat enum
-│   ├── services/
-│   │   └── apiClient.ts          # Shared Axios client + error handler
-│   └── tools/
-│       └── therapists.ts         # Tool registrations (list / get / search)
-├── dist/                         # Compiled JavaScript (after npm run build)
-├── package.json
-└── tsconfig.json
+https://plandamcp-production.up.railway.app/mcp
 ```
 
 ---
 
-## Development
+## Tools
+
+| Tool | When it's called |
+|------|-----------------|
+| `find_therapists` | User asks for a therapist or describes a mental health struggle |
+| `get_therapist` | Verifying a therapist's therapy approaches (BDT, EMDR, ACT, etc.) |
+| `list_specialties` | Looking up available specialty categories |
+| `get_therapist_available_days` | Checking which days a therapist has open slots |
+| `get_therapist_hours` | Getting appointment times for a specific date |
+
+---
+
+## Self-hosting
+
+### Requirements
+
+- Node.js ≥ 20
+- (Optional) `PLANDA_API_KEY` for authenticated API calls
+
+### Run locally
 
 ```bash
-npm run dev   # tsx watch mode — auto-reloads on source changes
-npm run build # compile TypeScript → dist/
-npm run clean # remove dist/
+npm install
+npm run build
+node dist/index.js                        # stdio transport (default)
+TRANSPORT=http PORT=3000 node dist/index.js  # HTTP transport
 ```
-# Planda_mcp
+
+The MCP endpoint will be at `http://localhost:3000/mcp`.
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRANSPORT` | `stdio` | `stdio` or `http` |
+| `PORT` | `3000` | HTTP server port |
+| `PLANDA_API_KEY` | — | Bearer token for authenticated Planda API calls |
+| `OPENAI_API_KEY` | — | Required for the assistant chat endpoint |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | Model used by the assistant |
+
+---
+
+## Project structure
+
+```
+src/
+├── index.ts              # Entry point, MCP server setup, HTTP routes
+├── prompts.ts            # System prompt for the assistant endpoint
+├── workflow.ts           # OpenAI Agents SDK integration
+├── types.ts              # TypeScript interfaces
+├── constants.ts          # API base URL, limits
+├── services/
+│   └── apiClient.ts      # Axios client + error handling
+└── tools/
+    └── therapists.ts     # All 5 tool registrations
+```
