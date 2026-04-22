@@ -137,7 +137,10 @@ Kullanıcı bir terapistin müsait günlerini veya saatlerini soruyorsa:
 
   ADIM 3 — Seçilen tarihteki müsait saatleri getir:
     ⚠️ branch_id VE service_id ZORUNLU — ikisi olmadan doğru slotlar gelmez.
-    service_id: find_therapists yanıtındaki services[0].id (genellikle "Bireysel Terapi")
+    service_id: find_therapists yanıtında zaten gelir — services[].id alanından al.
+      • Kullanıcı servis belirtmediyse → services[0].id kullan (genellikle "Bireysel Terapi")
+      • Kullanıcı "çift terapisi" gibi bir servis belirttiyse → o servise ait id'yi kullan
+      • Ayrıca get_therapist veya başka bir çağrı YAPMA — veri zaten find_therapists'te var.
     get_therapist_hours(therapist_id=id, date="YYYY-MM-DD", branch_id=..., service_id=...)
     → API ["12:00", "12:30", "13:00", ...] formatında bookable slotlar döndürür.
     → Bunları düz liste olarak yaz: "Müsait saatler: 12:00, 12:30, 13:00, 13:30, 14:00"
