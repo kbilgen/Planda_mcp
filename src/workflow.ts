@@ -209,16 +209,14 @@ async function runClaudeChat(input: ChatInput): Promise<ChatOutput> {
 
   while (response.stop_reason === "tool_use") {
     messages.push({ role: "assistant", content: response.content });
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const block of response.content) {
-      if (block.type === "tool_use") {
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: await executeTool(block.name, block.input as Record<string, unknown>),
-        });
-      }
-    }
+    const toolBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+      toolBlocks.map(async (block) => ({
+        type: "tool_result" as const,
+        tool_use_id: block.id,
+        content: await executeTool(block.name, block.input as Record<string, unknown>),
+      }))
+    );
     messages.push({ role: "user", content: toolResults });
     response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
@@ -270,16 +268,14 @@ async function runClaudeChatStream(input: ChatInput, callbacks: ChatStreamCallba
     if (final.stop_reason !== "tool_use") break;
 
     messages.push({ role: "assistant", content: final.content });
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const block of final.content) {
-      if (block.type === "tool_use") {
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: await executeTool(block.name, block.input as Record<string, unknown>),
-        });
-      }
-    }
+    const toolBlocks = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+      toolBlocks.map(async (block) => ({
+        type: "tool_result" as const,
+        tool_use_id: block.id,
+        content: await executeTool(block.name, block.input as Record<string, unknown>),
+      }))
+    );
     messages.push({ role: "user", content: toolResults });
     fullText = ""; // reset — next loop streams the final answer
   }

@@ -364,6 +364,7 @@ async function runHttp() {
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no"); // Nginx proxy buffering'i kapat
         res.flushHeaders();
+        const keepalive = setInterval(() => { res.write(": keepalive\n\n"); }, 15000);
         try {
             const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
             let fullText = "";
@@ -393,6 +394,7 @@ async function runHttp() {
             sseWrite(res, "error", { error: "Assistant unavailable. Please try again." });
         }
         finally {
+            clearInterval(keepalive);
             res.end();
         }
     });
