@@ -118,14 +118,14 @@ Check returned dates to see which fall on the requested day — only recommend t
     },
     {
         name: "get_therapist_hours",
-        description: "Returns available appointment slots for a therapist on a specific date.",
+        description: "Returns bookable appointment slots for a therapist on a specific date. ALWAYS pass branch_id and service_id — without both, wrong or no slots are returned. service_id comes from services[0].id in the therapist data.",
         input_schema: {
             type: "object",
             properties: {
                 therapist_id: { type: ["string", "number"], description: "Therapist ID" },
                 date: { type: "string", description: "Date in YYYY-MM-DD format" },
-                branch_id: { type: ["string", "number"], description: "Branch ID (optional)" },
-                service_id: { type: ["string", "number"], description: "Service ID (optional)" },
+                branch_id: { type: ["string", "number"], description: "Branch ID — required for correct results" },
+                service_id: { type: ["string", "number"], description: "Service ID from services[].id — required for correct results" },
             },
             required: ["therapist_id", "date"],
         },

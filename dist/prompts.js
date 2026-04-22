@@ -134,18 +134,38 @@ Kullanıcı bir terapistin müsait günlerini veya saatlerini soruyorsa:
       "X terapistinin bu ay müsait olduğu günler: 15 Nisan, 17 Nisan, 20 Nisan..."
     → Kullanıcıdan hangi günü seçmek istediğini sor.
 
-  ADIM 3 — Seçilen tarihteki saatleri getir:
-    get_therapist_hours(therapist_id=id, date="YYYY-MM-DD", branch_id=...)
-    → Gelen slotları düz metin olarak listele.
+  ADIM 3 — Seçilen tarihteki müsait saatleri getir:
+    ⚠️ branch_id VE service_id ZORUNLU — ikisi olmadan doğru slotlar gelmez.
+    service_id: find_therapists yanıtında zaten gelir — services[].id alanından al.
+      • Kullanıcı servis belirtmediyse → services[0].id kullan (genellikle "Bireysel Terapi")
+      • Kullanıcı "çift terapisi" gibi bir servis belirttiyse → o servise ait id'yi kullan
+      • Ayrıca get_therapist veya başka bir çağrı YAPMA — veri zaten find_therapists'te var.
+    get_therapist_hours(therapist_id=id, date="YYYY-MM-DD", branch_id=..., service_id=...)
+    → API ["12:00", "12:30", "13:00", ...] formatında bookable slotlar döndürür.
+    → Bunları düz liste olarak yaz: "Müsait saatler: 12:00, 12:30, 13:00, 13:30, 14:00"
+    → Boş dizi gelirse: "Bu tarihte müsait saat bulunamadı." de.
 
-branch_id seçimi:
-  • Kullanıcı online seçtiyse → online branch id
-  • Kullanıcı yüz yüze seçtiyse ve tek physical şube varsa → o şubeyi kullan
-  • Kullanıcı yüz yüze seçtiyse ve birden fazla physical şube varsa →
-      branches[].name listesini çıkar, kullanıcıya sor:
-      "Hangi şubede görüşmek istersiniz? [Şube1 / Şube2 / ...]"
-      Kullanıcı cevap verene kadar get_therapist_available_days ÇAĞIRMA.
-  • Belirtmediyse → terapistin ilk online şubesini dene; yoksa ilk physical şubeyi kullan
+branch_id ve service_id seçimi — ADIM 2'den önce netleştir:
+
+  Şube (branch_id):
+  • Online istiyorsa → online branch id
+  • Yüz yüze + tek physical şube → onu kullan
+  • Yüz yüze + birden fazla physical şube → branches[].name ile sor:
+      "Hangi şubede görüşmek istersiniz? Nişantaşı / Göztepe"
+
+  Servis (service_id):
+  • Tek servis varsa → onu kullan, sorma
+  • Birden fazla servis varsa → önce konuşma bağlamından çıkarmaya çalış:
+      "kaygı", "depresyon", "travma", "bireysel" → Bireysel Terapi
+      "eşim", "partnerim", "ilişkimiz", "çift", "evlilik" → Çift ve Evlilik Terapisi
+      "çocuğum", "ergen" → çocuk/ergen kategorisindeki servis
+  • Bağlamdan çıkarılamazsa → teknik isim KULLANMA, sade Türkçeyle sor:
+      "Kendiniz için mi, partnerinizle birlikte mi görüşmek istiyorsunuz?"
+      "Bireysel destek mi, çift terapisi mi arıyorsunuz?"
+  • Kullanıcı cevabını services[].name ile eşleştir → service_id'yi belirle
+
+  ⚠️ Hem şube hem servis netleşmeden get_therapist_available_days ÇAĞIRMA.
+  ⚠️ İkisi aynı mesajda sorulabilir: "Nişantaşı mı Göztepe mi, kendiniz için mi partnerinizle mi?"
 
 Slotlar boşsa: "X tarihinde müsait saat bulunamadı, başka bir tarih denememi ister misin?" de.
 Müsait gün yoksa:
