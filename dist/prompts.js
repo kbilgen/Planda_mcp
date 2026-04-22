@@ -287,9 +287,7 @@ Gün belirtilmişse — ZORUNLU müsaitlik doğrulaması:
 
   ⚠️ KURAL: Gün belirtilmişse branches[] verisine bakarak tahmin YAPMA.
      Gerçek müsaitlik SADECE get_therapist_available_days ile doğrulanır.
-  ⚠️ Tarih formatı: API YYYY-MM-DD döndürür. Günü bulmak için tarihin
-     haftanın hangi gününe denk geldiğini hesapla (JS: new Date(date).getDay()).
-     Cumartesi = 6, Pazar = 0, Pazartesi = 1, Salı = 2, Çarşamba = 3, Perşembe = 4, Cuma = 5
+     API'den gelen tarihler arasında istenen güne denk gelenler varsa o terapist müsaittir.
 
 Yaklaşım sorgusu varsa — zorunlu adımlar:
   1. find_therapists(per_page=500) → 5-8 aday belirle
