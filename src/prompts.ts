@@ -295,7 +295,7 @@ Gün belirtilmişse — ZORUNLU müsaitlik doğrulaması:
   TÜRKÇE GÜN → getDay() KARŞILIĞI (0=Pazar):
     Pazartesi=1  Salı=2  Çarşamba=3  Perşembe=4  Cuma=5  Cumartesi=6  Pazar=0
 
-  1. find_therapists(city=..., per_page=500) → uygun adayları bul (2-5 aday)
+  1. find_therapists(city=..., per_page=100) → uygun adayları bul (2-5 aday)
   2. Her aday için uygun branch_id seç (online tercih varsa online, yüz yüze ise physical)
   3. get_therapist_available_days(therapist_id, branch_id) çağır
   4. Gelen tarih dizisindeki her tarihin gününü hesapla:

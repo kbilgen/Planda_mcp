@@ -261,6 +261,150 @@ async function runClaudeChatStream(input, callbacks) {
         ],
     };
 }
+// ─── Gemini path ─────────────────────────────────────────────────────────────
+import { GoogleGenerativeAI, FunctionCallingMode, SchemaType, } from "@google/generative-ai";
+const geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-preview-04-17";
+const GEMINI_TOOLS = [
+    {
+        name: "find_therapists",
+        description: "Search licensed therapists from Planda. Call this FIRST. Use per_page=100 to get full catalogue. Only city filter works server-side; filter all others AI-side.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                city: { type: SchemaType.STRING, description: "City for in-person sessions. Omit for online." },
+                page: { type: SchemaType.NUMBER, description: "Page number (default 1)" },
+                per_page: { type: SchemaType.NUMBER, description: "Results per page, use 100 for full catalogue" },
+            },
+        },
+    },
+    {
+        name: "get_therapist",
+        description: "Fetch full profile by ID. MANDATORY for approach queries (BDT, EMDR, ACT, Schema etc.). Only approaches[] here.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                id: { type: SchemaType.STRING, description: "Therapist unique ID" },
+            },
+            required: ["id"],
+        },
+    },
+    {
+        name: "list_specialties",
+        description: "Returns all specialty categories. Use when unsure of exact specialty names.",
+        parameters: { type: SchemaType.OBJECT, properties: {} },
+    },
+    {
+        name: "get_therapist_available_days",
+        description: "Returns dates a therapist has open slots at a specific branch.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                therapist_id: { type: SchemaType.STRING, description: "Therapist ID" },
+                branch_id: { type: SchemaType.STRING, description: "Branch ID from branches[]" },
+            },
+            required: ["therapist_id", "branch_id"],
+        },
+    },
+    {
+        name: "get_therapist_hours",
+        description: "Returns available appointment slots for a therapist on a specific date.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                therapist_id: { type: SchemaType.STRING, description: "Therapist ID" },
+                date: { type: SchemaType.STRING, description: "Date in YYYY-MM-DD format" },
+                branch_id: { type: SchemaType.STRING, description: "Branch ID (optional)" },
+                service_id: { type: SchemaType.STRING, description: "Service ID (optional)" },
+            },
+            required: ["therapist_id", "date"],
+        },
+    },
+];
+function toGeminiHistory(history) {
+    return history.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+    }));
+}
+async function runGeminiChat(input) {
+    const model = geminiClient.getGenerativeModel({
+        model: GEMINI_MODEL,
+        systemInstruction: SYSTEM_PROMPT,
+        tools: [{ functionDeclarations: GEMINI_TOOLS }],
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingMode.AUTO } },
+    });
+    const chat = model.startChat({ history: toGeminiHistory(input.history) });
+    let result = await chat.sendMessage(input.message);
+    let toolRounds = 0;
+    while (result.response.functionCalls()?.length) {
+        if (++toolRounds > MAX_TOOL_ROUNDS)
+            throw new Error("Tool call limit exceeded");
+        const calls = result.response.functionCalls();
+        calls.forEach((c) => toolStatusMessage(c.name));
+        const toolParts = await Promise.all(calls.map(async (call) => ({
+            functionResponse: {
+                name: call.name,
+                response: { result: JSON.parse(await executeTool(call.name, call.args)) },
+            },
+        })));
+        result = await chat.sendMessage(toolParts);
+    }
+    const text = result.response.text();
+    return {
+        response: text,
+        updatedHistory: [
+            ...input.history,
+            { role: "user", content: input.message },
+            { role: "assistant", content: text },
+        ],
+    };
+}
+async function runGeminiChatStream(input, callbacks) {
+    const model = geminiClient.getGenerativeModel({
+        model: GEMINI_MODEL,
+        systemInstruction: SYSTEM_PROMPT,
+        tools: [{ functionDeclarations: GEMINI_TOOLS }],
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingMode.AUTO } },
+    });
+    const chat = model.startChat({ history: toGeminiHistory(input.history) });
+    let fullText = "";
+    let toolRounds = 0;
+    let streamResult = await chat.sendMessageStream(input.message);
+    while (true) {
+        if (toolRounds > MAX_TOOL_ROUNDS)
+            throw new Error("Tool call limit exceeded");
+        const finalResponse = await streamResult.response;
+        const functionCalls = finalResponse.functionCalls();
+        if (!functionCalls?.length) {
+            for await (const chunk of streamResult.stream) {
+                const delta = chunk.text();
+                if (delta) {
+                    fullText += delta;
+                    callbacks.onDelta?.(delta);
+                }
+            }
+            break;
+        }
+        toolRounds++;
+        callbacks.onStatus?.(toolStatusMessage(functionCalls[0].name));
+        const toolParts = await Promise.all(functionCalls.map(async (call) => ({
+            functionResponse: {
+                name: call.name,
+                response: { result: JSON.parse(await executeTool(call.name, call.args)) },
+            },
+        })));
+        streamResult = await chat.sendMessageStream(toolParts);
+    }
+    return {
+        response: fullText,
+        updatedHistory: [
+            ...input.history,
+            { role: "user", content: input.message },
+            { role: "assistant", content: fullText },
+        ],
+    };
+}
 // ─── OpenAI path (fallback) ───────────────────────────────────────────────────
 import { hostedMcpTool, Agent, Runner, withTrace } from "@openai/agents";
 const _openaiMcp = hostedMcpTool({
@@ -295,6 +439,7 @@ async function runOpenAIChat(input) {
 }
 // ─── Public API ───────────────────────────────────────────────────────────────
 const USE_CLAUDE = Boolean(process.env.ANTHROPIC_API_KEY);
+const USE_GEMINI = Boolean(process.env.GEMINI_API_KEY);
 const CHAT_TIMEOUT_MS = parseInt(process.env.CHAT_TIMEOUT_MS ?? "90000", 10);
 function withTimeout(promise, ms) {
     return Promise.race([
@@ -310,7 +455,11 @@ export async function runChat(input) {
             updatedHistory: [...input.history, { role: "user", content: input.message }, { role: "assistant", content: SAFE_RESPONSE }],
         };
     }
-    return withTimeout(USE_CLAUDE ? runClaudeChat(input) : runOpenAIChat(input), CHAT_TIMEOUT_MS);
+    if (USE_CLAUDE)
+        return withTimeout(runClaudeChat(input), CHAT_TIMEOUT_MS);
+    if (USE_GEMINI)
+        return withTimeout(runGeminiChat(input), CHAT_TIMEOUT_MS);
+    return withTimeout(runOpenAIChat(input), CHAT_TIMEOUT_MS);
 }
 export async function runChatStream(input, callbacks) {
     const guard = await checkGuardrails(input.message);
@@ -323,6 +472,8 @@ export async function runChatStream(input, callbacks) {
     }
     if (USE_CLAUDE)
         return withTimeout(runClaudeChatStream(input, callbacks), CHAT_TIMEOUT_MS);
+    if (USE_GEMINI)
+        return withTimeout(runGeminiChatStream(input, callbacks), CHAT_TIMEOUT_MS);
     // OpenAI streaming fallback — non-streaming graceful degradation
     const result = await withTimeout(runOpenAIChat(input), CHAT_TIMEOUT_MS);
     callbacks.onDelta?.(result.response);

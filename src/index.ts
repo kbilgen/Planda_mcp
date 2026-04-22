@@ -619,8 +619,8 @@ process.on("unhandledRejection", (reason) => {
 console.log("[planda] Starting up — Node", process.version);
 console.log("[planda] PORT:", process.env.PORT ?? "3000 (default)");
 
-if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-  console.error("[planda] FATAL: OPENAI_API_KEY or ANTHROPIC_API_KEY must be set");
+if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+  console.error("[planda] FATAL: OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY must be set");
   process.exit(1);
 }
 
