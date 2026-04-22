@@ -296,8 +296,8 @@ async function runHttp() {
     //          history yoksa → session store'dan yükle
     //
     app.post("/v1/assistant/chat", async (req, res) => {
-        if (!process.env.OPENAI_API_KEY) {
-            res.status(500).json({ error: "OPENAI_API_KEY not configured" });
+        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
             return;
         }
         const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
@@ -342,8 +342,8 @@ async function runHttp() {
     // iOS'ta: URLSession + EventSource ile parse edilir.
     //
     app.post("/v1/assistant/chat/stream", async (req, res) => {
-        if (!process.env.OPENAI_API_KEY) {
-            res.status(500).json({ error: "OPENAI_API_KEY not configured" });
+        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
             return;
         }
         const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
@@ -398,8 +398,8 @@ async function runHttp() {
     });
     // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
     app.post("/api/chat", async (req, res) => {
-        if (!process.env.OPENAI_API_KEY) {
-            res.status(500).json({ error: "OPENAI_API_KEY not configured" });
+        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
             return;
         }
         const { message, history } = req.body;
