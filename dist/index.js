@@ -159,26 +159,36 @@ async function postProcessResponse(text) {
         }
     }
     // ── Pass 3: Fix wrong slugs; enrich tags that lack card-format context ──────
-    // Each tag is evaluated independently via `offset`:
+    // Each tag is evaluated independently:
     //   • Tag preceded by a **Name** — Title header → card content already present,
     //     just fix the slug.
     //   • Tag with no bold header before it (bare tag OR availability text) →
     //     prepend Name / Fee / Location so iOS card renders correctly.
     if (!/\[\[expert:[^\]]+\]\]/.test(result))
         return result;
-    result = result.replace(/\[\[expert:([^\]]+)\]\]/g, (_m, slug, offset) => {
-        const textBefore = result.slice(0, offset);
-        // Find the nearest bold **Name** — Title header before this tag.
-        // Use THAT therapist's username — not the (potentially wrong) slug the agent wrote.
-        const headerMatches = [...textBefore.matchAll(/\*\*([^*\n]+)\*\*\s*—/g)];
-        if (headerMatches.length > 0) {
-            const lastHeader = headerMatches[headerMatches.length - 1];
-            const tFromHeader = findTherapist(therapists, lastHeader[1].trim());
+    const tagCtxMap = new Map();
+    const tagScan = /\[\[expert:([^\]]+)\]\]/g;
+    let scanMatch;
+    while ((scanMatch = tagScan.exec(result)) !== null) {
+        const textBefore = result.slice(0, scanMatch.index);
+        const headers = [...textBefore.matchAll(/\*\*([^*\n]+)\*\*\s*—/g)];
+        tagCtxMap.set(scanMatch.index, {
+            slug: scanMatch[1],
+            precedingHeader: headers.length > 0 ? headers[headers.length - 1][1].trim() : null,
+        });
+    }
+    result = result.replace(/\[\[expert:([^\]]+)\]\]/g, (_m, _slug, offset) => {
+        const ctx = tagCtxMap.get(offset);
+        if (!ctx)
+            return _m;
+        // Has a bold header before it → fix the slug to match that header's therapist
+        if (ctx.precedingHeader) {
+            const tFromHeader = findTherapist(therapists, ctx.precedingHeader);
             if (tFromHeader?.username)
                 return `[[expert:${tFromHeader.username}]]`;
         }
         // No bold header context → slug-based lookup + card enrichment
-        const t = findTherapist(therapists, slug);
+        const t = findTherapist(therapists, ctx.slug);
         if (!t?.username)
             return _m;
         const correctTag = `[[expert:${t.username}]]`;
