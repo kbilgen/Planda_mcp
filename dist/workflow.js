@@ -269,7 +269,7 @@ async function runClaudeChatStream(input, callbacks) {
 // ─── Gemini path ─────────────────────────────────────────────────────────────
 import { GoogleGenerativeAI, FunctionCallingMode, SchemaType, } from "@google/generative-ai";
 const geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-preview-04-17";
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-preview-05-20";
 const GEMINI_TOOLS = [
     {
         name: "find_therapists",
