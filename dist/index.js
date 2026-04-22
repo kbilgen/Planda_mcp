@@ -364,7 +364,12 @@ async function runHttp() {
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no"); // Nginx proxy buffering'i kapat
         res.flushHeaders();
-        const keepalive = setInterval(() => { res.write(": keepalive\n\n"); }, 15000);
+        const keepalive = setInterval(() => { try {
+            res.write(": keepalive\n\n");
+        }
+        catch {
+            clearInterval(keepalive);
+        } }, 15000);
         try {
             const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
             let fullText = "";

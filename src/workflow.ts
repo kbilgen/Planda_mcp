@@ -255,18 +255,29 @@ async function runClaudeChatStream(input: ChatInput, callbacks: ChatStreamCallba
       messages,
     });
 
+    // Buffer text deltas — only flush to client in the final (non-tool) round
+    const roundDeltas: string[] = [];
+
     for await (const event of stream) {
       if (event.type === "content_block_start" && event.content_block.type === "tool_use") {
         callbacks.onStatus?.(toolStatusMessage(event.content_block.name));
       } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        callbacks.onDelta?.(event.delta.text);
-        fullText += event.delta.text;
+        roundDeltas.push(event.delta.text);
       }
     }
 
     const final = await stream.finalMessage();
-    if (final.stop_reason !== "tool_use") break;
 
+    if (final.stop_reason !== "tool_use") {
+      // Final answer — flush buffered deltas to client
+      for (const delta of roundDeltas) {
+        callbacks.onDelta?.(delta);
+        fullText += delta;
+      }
+      break;
+    }
+
+    // Tool round — discard any intermediate text, execute tools
     messages.push({ role: "assistant", content: final.content });
     const toolBlocks = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
@@ -277,7 +288,6 @@ async function runClaudeChatStream(input: ChatInput, callbacks: ChatStreamCallba
       }))
     );
     messages.push({ role: "user", content: toolResults });
-    fullText = ""; // reset — next loop streams the final answer
   }
 
   return {
