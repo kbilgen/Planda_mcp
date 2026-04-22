@@ -276,6 +276,20 @@ Normal akış — 1 çağrı:
   → specialties[].name, is_online, fee okuyarak AI filtreler
   → 2-3 aday sun
 
+Gün belirtilmişse — ZORUNLU müsaitlik doğrulaması:
+  Kullanıcı "cumartesi", "pazartesi" gibi belirli bir gün içeren terapist araması yaparsa:
+
+  1. find_therapists(city=..., per_page=500) → fiziksel şubesi olan adayları bul (5-8 aday)
+  2. Her aday için get_therapist_available_days(therapist_id, branch_id) çağır
+  3. Gelen tarihler içinde istenen gün var mı?
+     → O gün YOK → adayı listeden çıkar, önerme
+     → O gün VAR → öner
+  4. Hiç uygun çıkmazsa: "İstanbul'da cumartesi müsait terapist bulunamadı." de.
+
+  ⚠️ KURAL: Gün belirtilmişse branches[] verisine bakarak tahmin YAPMA.
+     Gerçek müsaitlik SADECE get_therapist_available_days ile doğrulanır.
+     API'den gelen tarihler arasında istenen güne denk gelenler varsa o terapist müsaittir.
+
 Yaklaşım sorgusu varsa — zorunlu adımlar:
   1. find_therapists(per_page=500) → 5-8 aday belirle
   2. Her aday için get_therapist çağır (ATLAMA)
