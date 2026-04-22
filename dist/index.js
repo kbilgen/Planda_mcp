@@ -449,6 +449,42 @@ async function runHttp() {
             res.status(502).json({ error: "Assistant unavailable. Please try again." });
         }
     });
+    // ── POST /debug/tool — raw API tool output for inspection ───────────────────
+    app.post("/debug/tool", async (req, res) => {
+        const { tool, params } = req.body ?? {};
+        if (!tool || !params) {
+            res.status(400).json({ error: "Required: { tool, params }" });
+            return;
+        }
+        try {
+            const { findTherapists, getTherapist, listSpecialties, getTherapistHours, getTherapistAvailableDays, } = await import("./services/therapistApi.js");
+            let result;
+            switch (tool) {
+                case "find_therapists":
+                    result = await findTherapists(params);
+                    break;
+                case "get_therapist":
+                    result = await getTherapist(params.id);
+                    break;
+                case "list_specialties":
+                    result = await listSpecialties();
+                    break;
+                case "get_therapist_hours":
+                    result = await getTherapistHours(params);
+                    break;
+                case "get_therapist_available_days":
+                    result = await getTherapistAvailableDays(params);
+                    break;
+                default:
+                    res.status(400).json({ error: `Unknown tool: ${tool}` });
+                    return;
+            }
+            res.json({ tool, params, result });
+        }
+        catch (err) {
+            res.status(500).json({ tool, params, error: String(err) });
+        }
+    });
     // ── POST /mcp — MCP JSON-RPC ─────────────────────────────────────────────────
     app.post("/mcp", async (req, res) => {
         try {
