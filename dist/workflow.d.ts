@@ -14,6 +14,11 @@ export interface ChatOutput {
     updatedHistory: ChatMessage[];
 }
 export declare function runChat(input: ChatInput): Promise<ChatOutput>;
+export interface ChatStreamCallbacks {
+    onStatus?: (message: string) => void;
+    onDelta?: (delta: string) => void;
+}
+export declare function runChatStream(input: ChatInput, callbacks: ChatStreamCallbacks): Promise<ChatOutput>;
 export type WorkflowInput = {
     input_as_text: string;
     history?: {

@@ -24,9 +24,64 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import express from "express";
 import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
-import { runWorkflow, runChat } from "./workflow.js";
+import { runWorkflow, runChat, runChatStream } from "./workflow.js";
 import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
 import { makeApiRequest } from "./services/apiClient.js";
+// ─── Therapist list cache ─────────────────────────────────────────────────────
+const THERAPIST_CACHE_TTL_MS = 5 * 60 * 1000;
+let therapistCache = null;
+async function getCachedTherapists() {
+    if (therapistCache && Date.now() - therapistCache.fetchedAt < THERAPIST_CACHE_TTL_MS) {
+        return therapistCache.therapists;
+    }
+    const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, { per_page: 500 });
+    const therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
+    therapistCache = { therapists, fetchedAt: Date.now() };
+    return therapists;
+}
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const rateLimitMap = new Map();
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of rateLimitMap) {
+        if (now > entry.resetAt)
+            rateLimitMap.delete(ip);
+    }
+}, 5 * 60 * 1000);
+function checkRateLimit(ip) {
+    const now = Date.now();
+    const entry = rateLimitMap.get(ip);
+    if (!entry || now > entry.resetAt) {
+        rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+        return true;
+    }
+    if (entry.count >= RATE_LIMIT_MAX)
+        return false;
+    entry.count++;
+    return true;
+}
+// ─── Session helpers ──────────────────────────────────────────────────────────
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function extractSessionId(body, req) {
+    const candidate = (typeof body.session_id === "string" && body.session_id.trim() ? body.session_id.trim() : null) ??
+        (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
+            ? body.previous_response_id.trim()
+            : null) ??
+        req.headers["x-session-id"]?.trim() ??
+        null;
+    return candidate && UUID_RE.test(candidate) ? candidate : crypto.randomUUID();
+}
+async function resolveHistory(clientHistory, sessionId) {
+    if (clientHistory) {
+        return clientHistory.filter((m) => m !== null &&
+            typeof m === "object" &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.content === "string");
+    }
+    return getHistory(sessionId);
+}
 // ─── Turkish character normalisation ─────────────────────────────────────────
 function normTR(s) {
     return s.toLowerCase()
@@ -68,8 +123,7 @@ async function postProcessResponse(text) {
         return text;
     let therapists = [];
     try {
-        const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, { per_page: 500 });
-        therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
+        therapists = await getCachedTherapists();
     }
     catch {
         return text;
@@ -239,37 +293,19 @@ async function runHttp() {
             res.status(500).json({ error: "OPENAI_API_KEY not configured" });
             return;
         }
+        const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+        if (!checkRateLimit(ip)) {
+            res.status(429).json({ error: "Too many requests. Please wait a moment before retrying." });
+            return;
+        }
         const body = req.body;
         const message = typeof body.message === "string" ? body.message.trim() : "";
         if (!message) {
             res.status(400).json({ error: "message is required" });
             return;
         }
-        // session_id: body → header → yeni UUID
-        const sessionId = (typeof body.session_id === "string" && body.session_id.trim()
-            ? body.session_id.trim()
-            : null) ??
-            (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
-                ? body.previous_response_id.trim()
-                : null) ??
-            req.headers["x-session-id"]?.trim() ??
-            crypto.randomUUID();
-        // History kaynağı: client gönderirse onu kullan (server restart'a karşı güvenli)
-        // Gönderilmezse server-side session store'dan yükle
-        let history;
-        const clientHistory = Array.isArray(body.history) ? body.history : null;
-        if (clientHistory) {
-            // Client-side history — validate shape
-            history = clientHistory
-                .filter((m) => m !== null &&
-                typeof m === "object" &&
-                (m.role === "user" || m.role === "assistant") &&
-                typeof m.content === "string");
-        }
-        else {
-            // Server-side session store fallback (Redis veya in-memory)
-            history = await getHistory(sessionId);
-        }
+        const sessionId = extractSessionId(body, req);
+        const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
         try {
             const { response: rawResponse, updatedHistory } = await runChat({ message, history });
             const response = await postProcessResponse(rawResponse);
@@ -303,51 +339,47 @@ async function runHttp() {
             res.status(500).json({ error: "OPENAI_API_KEY not configured" });
             return;
         }
+        const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+        if (!checkRateLimit(ip)) {
+            res.status(429).json({ error: "Too many requests. Please wait a moment before retrying." });
+            return;
+        }
         const body = req.body;
         const message = typeof body.message === "string" ? body.message.trim() : "";
         if (!message) {
             res.status(400).json({ error: "message is required" });
             return;
         }
-        const sessionId = (typeof body.session_id === "string" && body.session_id.trim()
-            ? body.session_id.trim()
-            : null) ??
-            (typeof body.previous_response_id === "string" && body.previous_response_id.trim()
-                ? body.previous_response_id.trim()
-                : null) ??
-            req.headers["x-session-id"]?.trim() ??
-            crypto.randomUUID();
+        const sessionId = extractSessionId(body, req);
         // SSE headers
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no"); // Nginx proxy buffering'i kapat
         res.flushHeaders();
-        // Anında "status" eventi — kullanıcı boş ekran görmez
-        sseWrite(res, "status", { message: "Terapistler aranıyor..." });
         try {
-            const clientHistory = Array.isArray(body.history) ? body.history : null;
-            let history;
-            if (clientHistory) {
-                history = clientHistory.filter((m) => m !== null &&
-                    typeof m === "object" &&
-                    (m.role === "user" || m.role === "assistant") &&
-                    typeof m.content === "string");
+            const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
+            let fullText = "";
+            const { updatedHistory } = await runChatStream({ message, history }, {
+                onStatus: (msg) => sseWrite(res, "status", { message: msg }),
+                onDelta: (delta) => {
+                    fullText += delta;
+                    sseWrite(res, "delta", { delta });
+                },
+            });
+            // Post-process full text (fixes Turkish names + expert tags)
+            const response = await postProcessResponse(fullText);
+            // If post-processing changed the text, send corrected event so iOS can replace
+            if (response !== fullText) {
+                sseWrite(res, "corrected", { response, session_id: sessionId });
             }
-            else {
-                history = await getHistory(sessionId);
-            }
-            const { response: rawResponse2, updatedHistory } = await runChat({ message, history });
-            const response = await postProcessResponse(rawResponse2);
             saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
-            // Yanıtı SSE eventi olarak gönder
-            sseWrite(res, "response", {
+            sseWrite(res, "done", {
                 response,
                 message: response,
                 session_id: sessionId,
                 previous_response_id: sessionId,
             });
-            sseWrite(res, "done", { session_id: sessionId });
         }
         catch (err) {
             console.error("[planda] /v1/assistant/chat/stream error:", err);
