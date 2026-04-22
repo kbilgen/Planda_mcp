@@ -521,21 +521,19 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
     "get_therapist_hours",
     {
       title: "Get Therapist Available Hours",
-      description: `Returns available appointment slots for a specific therapist on a given date.
+      description: `Returns bookable appointment time slots for a therapist on a specific date.
+
+⚠️ ALWAYS pass branch_id AND service_id — without both, the API returns wrong or no slots.
+  - branch_id: from therapist's branches[].id
+  - service_id: from therapist's services[].id (e.g. Bireysel Terapi)
 
 Workflow:
-  1. Call find_therapists to find the therapist by name → get their id.
-  2. Optionally get branch_id from branches[] and service_id from services[].
-  3. Call this tool with therapist_id, date, and optional branch_id / service_id.
-
-Args:
-  - therapist_id: therapist's numeric id
-  - date: YYYY-MM-DD (e.g. "2025-05-20")
-  - branch_id (optional): filter by branch/location
-  - service_id (optional): filter by service type
+  1. find_therapists → get therapist id, branches[], services[]
+  2. get_therapist_available_days(therapist_id, branch_id) → pick a date
+  3. get_therapist_hours(therapist_id, date, branch_id, service_id) → get exact slots
 
 Returns:
-  List of available time slots for that day.`,
+  Array of bookable times: ["12:00", "12:30", "13:00", ...]`,
       inputSchema: HoursInputSchema,
       annotations: {
         readOnlyHint: true,

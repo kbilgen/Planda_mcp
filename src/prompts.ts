@@ -135,15 +135,13 @@ Kullanıcı bir terapistin müsait günlerini veya saatlerini soruyorsa:
       "X terapistinin bu ay müsait olduğu günler: 15 Nisan, 17 Nisan, 20 Nisan..."
     → Kullanıcıdan hangi günü seçmek istediğini sor.
 
-  ADIM 3 — Seçilen tarihteki müsait pencereyi getir:
-    get_therapist_hours(therapist_id=id, date="YYYY-MM-DD", branch_id=...)
-    → API start_at / end_at zaman aralığı döndürür — bu belirli randevu saatleri DEĞİL,
-      terapistin o gün müsait olduğu zaman penceresidir.
-    → Şöyle yaz: "[İsim], [tarih] tarihinde [start_at]–[end_at] saatleri arasında müsait.
-       Randevu almak için profil sayfasını ziyaret edebilirsiniz."
-    → "10:00 randevusu var", "14:00'da boş" gibi kesin saat ÖNERİLMEZ —
-      gerçek slotları yalnızca Planda sitesi/uygulaması hesaplar.
-    → Birden fazla pencere varsa hepsini listele: "10:00–12:00 ve 15:00–18:00 arası müsait."
+  ADIM 3 — Seçilen tarihteki müsait saatleri getir:
+    ⚠️ branch_id VE service_id ZORUNLU — ikisi olmadan doğru slotlar gelmez.
+    service_id: find_therapists yanıtındaki services[0].id (genellikle "Bireysel Terapi")
+    get_therapist_hours(therapist_id=id, date="YYYY-MM-DD", branch_id=..., service_id=...)
+    → API ["12:00", "12:30", "13:00", ...] formatında bookable slotlar döndürür.
+    → Bunları düz liste olarak yaz: "Müsait saatler: 12:00, 12:30, 13:00, 13:30, 14:00"
+    → Boş dizi gelirse: "Bu tarihte müsait saat bulunamadı." de.
 
 branch_id seçimi:
   • Kullanıcı online seçtiyse → online branch id
