@@ -20,7 +20,11 @@ import type { ChatMessage } from "./sessionStore.js";
 
 // ─── Guardrails (OpenAI moderation — optional) ────────────────────────────────
 
-const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _guardrailsClient: OpenAI | null = null;
+function getGuardrailsClient(): OpenAI {
+  if (!_guardrailsClient) _guardrailsClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+  return _guardrailsClient;
+}
 
 const GUARDRAILS_CONFIG = {
   guardrails: [
@@ -46,7 +50,7 @@ async function checkGuardrails(text: string): Promise<{ blocked: boolean; reason
     const results = (await runGuardrails(
       text,
       GUARDRAILS_CONFIG as never,
-      { guardrailLlm: openaiClient },
+      { guardrailLlm: getGuardrailsClient() },
       true
     )) as Array<{ tripwireTriggered?: boolean; info?: { flagged_categories?: string[] } }>;
     const blocked = results.some((r) => r.tripwireTriggered === true);
@@ -444,22 +448,32 @@ async function runGeminiChatStream(input: ChatInput, callbacks: ChatStreamCallba
 import { hostedMcpTool, Agent, Runner, withTrace } from "@openai/agents";
 import type { AgentInputItem } from "@openai/agents";
 
-const _openaiMcp = hostedMcpTool({
-  serverLabel: "Kaan_mcp",
-  allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
-  requireApproval: "never",
-  serverUrl: process.env.MCP_SERVER_URL ?? "https://plandamcp-production.up.railway.app/mcp",
-});
+let _openaiAgent: InstanceType<typeof Agent> | null = null;
+let _openaiRunner: InstanceType<typeof Runner> | null = null;
 
-const _openaiAgent = new Agent({
-  name: "PlandaAssistant",
-  instructions: SYSTEM_PROMPT,
-  model: (process.env.OPENAI_MODEL ?? "gpt-4.1-mini") as string,
-  tools: [_openaiMcp],
-  modelSettings: { store: true },
-});
+function getOpenAIAgent(): InstanceType<typeof Agent> {
+  if (!_openaiAgent) {
+    const mcp = hostedMcpTool({
+      serverLabel: "Kaan_mcp",
+      allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
+      requireApproval: "never",
+      serverUrl: process.env.MCP_SERVER_URL ?? "https://plandamcp-production.up.railway.app/mcp",
+    });
+    _openaiAgent = new Agent({
+      name: "PlandaAssistant",
+      instructions: SYSTEM_PROMPT,
+      model: (process.env.OPENAI_MODEL ?? "gpt-4.1-mini") as string,
+      tools: [mcp],
+      modelSettings: { store: true },
+    });
+  }
+  return _openaiAgent;
+}
 
-const _openaiRunner = new Runner();
+function getOpenAIRunner(): InstanceType<typeof Runner> {
+  if (!_openaiRunner) _openaiRunner = new Runner();
+  return _openaiRunner;
+}
 
 async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
   return withTrace("PlandaChat", async () => {
@@ -471,8 +485,8 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
       ),
       { role: "user", content: [{ type: "input_text", text: input.message }] },
     ];
-    const result = await _openaiRunner.run(_openaiAgent, items);
-    const text = result.finalOutput ?? "";
+    const result = await getOpenAIRunner().run(getOpenAIAgent(), items);
+    const text = String(result.finalOutput ?? "");
     return {
       response: text,
       updatedHistory: [...input.history, { role: "user" as const, content: input.message }, { role: "assistant" as const, content: text }],
