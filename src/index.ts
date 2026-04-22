@@ -198,16 +198,23 @@ async function postProcessResponse(text: string): Promise<string> {
   if (!/\[\[expert:[^\]]+\]\]/.test(result)) return result;
 
   result = result.replace(/\[\[expert:([^\]]+)\]\]/g, (_m, slug: string, offset: number) => {
+    const textBefore = result.slice(0, offset);
+
+    // Find the nearest bold **Name** — Title header before this tag.
+    // Use THAT therapist's username — not the (potentially wrong) slug the agent wrote.
+    const headerMatches = [...textBefore.matchAll(/\*\*([^*\n]+)\*\*\s*—/g)];
+    if (headerMatches.length > 0) {
+      const lastHeader = headerMatches[headerMatches.length - 1];
+      const tFromHeader = findTherapist(therapists, lastHeader[1].trim());
+      if (tFromHeader?.username) return `[[expert:${tFromHeader.username}]]`;
+    }
+
+    // No bold header context → slug-based lookup + card enrichment
     const t = findTherapist(therapists, slug);
     if (!t?.username) return _m;
 
     const correctTag = `[[expert:${t.username}]]`;
 
-    // If a bold **Name** — Title header appears anywhere before this tag,
-    // the card content is already formatted → only fix the slug.
-    if (/\*\*[^*\n]+\*\*\s*—/.test(result.slice(0, offset))) return correctTag;
-
-    // No card-format context → prepend Name / Fee / Location
     const name  = t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
     const title = t.data?.title?.name ?? "";
     const fees  = (t.services ?? [])
@@ -216,11 +223,13 @@ async function postProcessResponse(text: string): Promise<string> {
         return f ? `${s.name}: ${Math.round(parseFloat(f)).toLocaleString("tr-TR")} TL` : null;
       })
       .filter(Boolean);
+
+    const physicalBranches = (t.branches ?? []).filter((b) => b.type === "physical");
     const isOnline = (t.branches ?? []).some((b) => b.type === "online");
-    const cities   = [...new Set(
-      (t.branches ?? []).filter((b) => b.type === "physical").map((b) => b.city?.name).filter(Boolean)
-    )];
-    const location = [isOnline ? "Online" : null, ...cities].filter(Boolean).join(" / ");
+    const branchLabels = physicalBranches.map((b) =>
+      [b.city?.name, b.name].filter(Boolean).join(" — ")
+    );
+    const location = [isOnline ? "Online" : null, ...branchLabels].filter(Boolean).join(" / ");
 
     const lines: string[] = [];
     if (name)        lines.push(`**${name}**${title ? " — " + title : ""}`);

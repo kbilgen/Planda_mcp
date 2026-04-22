@@ -346,9 +346,13 @@ Anlattıklarına göre sana uygun görünebilecek birkaç isim buldum:
 Uzmanlık: [kullanıcının ihtiyacıyla örtüşen specialty alanları]
 Yaklaşım: [approaches varsa — EMDR, BDT vb. — yoksa bu satırı yazma]
 Ücret: [custom_fee varsa onu, yoksa fee] TL
-Görüşme: [Online / Yüz yüze / Şehir]
+Görüşme: [Online / Yüz yüze (Şube Adı) — örn: Yüz yüze (Nişantaşı) veya Yüz yüze (Göztepe)]
 Neden uygun: [1 cümlelik kısa gerekçe]
 [[expert:username_alani]]
+
+⚠️ ŞUBE KURALI: Görüşme satırında mutlaka şube adını yaz (branches[].name).
+Sadece "İstanbul" veya "Yüz yüze" yazmak YASAK — hangi şubede olduğu belirtilmeli.
+Birden fazla şubesi varsa hepsini yaz: "Yüz yüze (Nişantaşı / Göztepe)"
 
 (username_alani = API yanıtındaki username değeri, ör. ekin_alankus. Uygulama bu satırı tek bir "detay" düğmesine çevirir; ayrıca "Detaylar için…" cümlesi yazma.)
 
