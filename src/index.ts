@@ -371,8 +371,8 @@ async function runHttp(): Promise<void> {
   //          history yoksa → session store'dan yükle
   //
   app.post("/v1/assistant/chat", requireApiKey, async (req: Request, res: Response) => {
-    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
+    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)" });
       return;
     }
 
@@ -434,8 +434,8 @@ async function runHttp(): Promise<void> {
   // iOS'ta: URLSession + EventSource ile parse edilir.
   //
   app.post("/v1/assistant/chat/stream", requireApiKey, async (req: Request, res: Response) => {
-    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
+    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)" });
       return;
     }
 
@@ -517,8 +517,8 @@ async function runHttp(): Promise<void> {
 
   // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
   app.post("/api/chat", requireApiKey, async (req: Request, res: Response) => {
-    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
+    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)" });
       return;
     }
 
