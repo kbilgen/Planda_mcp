@@ -146,14 +146,21 @@ Kullanıcı bir terapistin müsait günlerini veya saatlerini soruyorsa:
     → Bunları düz liste olarak yaz: "Müsait saatler: 12:00, 12:30, 13:00, 13:30, 14:00"
     → Boş dizi gelirse: "Bu tarihte müsait saat bulunamadı." de.
 
-branch_id seçimi:
-  • Kullanıcı online seçtiyse → online branch id
-  • Kullanıcı yüz yüze seçtiyse ve tek physical şube varsa → o şubeyi kullan
-  • Kullanıcı yüz yüze seçtiyse ve birden fazla physical şube varsa →
-      branches[].name listesini çıkar, kullanıcıya sor:
-      "Hangi şubede görüşmek istersiniz? [Şube1 / Şube2 / ...]"
-      Kullanıcı cevap verene kadar get_therapist_available_days ÇAĞIRMA.
-  • Belirtmediyse → terapistin ilk online şubesini dene; yoksa ilk physical şubeyi kullan
+branch_id ve service_id seçimi — ADIM 2'den önce netleştir:
+
+  Şube (branch_id):
+  • Online istiyorsa → online branch id
+  • Yüz yüze + tek physical şube → onu kullan
+  • Yüz yüze + birden fazla physical şube → branches[].name ile sor:
+      "Hangi şubede görüşmek istersiniz? Nişantaşı / Göztepe"
+
+  Servis (service_id):
+  • Tek servis varsa → onu kullan, sorma
+  • Birden fazla servis varsa → services[].name ile sor:
+      "Hangi hizmet için randevu arıyorsunuz? Bireysel Terapi / Çift ve Evlilik Terapisi"
+
+  ⚠️ Hem şube hem servis netleşmeden get_therapist_available_days ÇAĞIRMA.
+  ⚠️ İkisi aynı mesajda sorulabilir: "Hangi şubede ve hangi hizmet için randevu arıyorsunuz?"
 
 Slotlar boşsa: "X tarihinde müsait saat bulunamadı, başka bir tarih denememi ister misin?" de.
 Müsait gün yoksa:
