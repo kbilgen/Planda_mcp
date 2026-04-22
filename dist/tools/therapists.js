@@ -9,7 +9,8 @@
  *   5. get_therapist_available_days  — available dates for a branch
  */
 import { z } from "zod";
-import { makeApiRequest, handleApiError } from "../services/apiClient.js";
+import { handleApiError } from "../services/apiClient.js";
+import { findTherapists, getTherapist, listSpecialties as apiListSpecialties, getTherapistHours as apiGetTherapistHours, getTherapistAvailableDays as apiGetTherapistAvailableDays, } from "../services/therapistApi.js";
 import { CHARACTER_LIMIT } from "../constants.js";
 import { ResponseFormat, } from "../types.js";
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
@@ -206,7 +207,7 @@ async function getCachedSpecialties() {
     if (specialtyCache && Date.now() - specialtyCache.fetchedAt < SPECIALTY_CACHE_TTL_MS) {
         return specialtyCache.specialties;
     }
-    const raw = await makeApiRequest("marketplace/specialties");
+    const raw = await apiListSpecialties();
     const specialties = Array.isArray(raw)
         ? raw
         : Array.isArray(raw.data)
@@ -261,14 +262,11 @@ Returns per therapist:
         },
     }, async (params) => {
         try {
-            // Build query params — omit undefined values
-            const query = {
+            const raw = await findTherapists({
                 page: params.page,
                 per_page: params.per_page,
-            };
-            if (params.city)
-                query["city"] = params.city;
-            const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, query);
+                city: params.city,
+            });
             let output = normaliseListResponse(raw, params.page, params.per_page);
             // Strip large bio fields before character limit check — prevents truncation of list
             output = { ...output, therapists: stripHeavyFields(output.therapists) };
@@ -357,7 +355,7 @@ Error Handling:
         },
     }, async (params) => {
         try {
-            const raw = await makeApiRequest(`marketplace/therapists/${params.id}`);
+            const raw = await getTherapist(params.id);
             // Handle both { data: Therapist } and bare Therapist responses
             const therapist = "data" in raw && raw.data ? raw.data : raw;
             let text;
@@ -398,7 +396,7 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
         },
     }, async () => {
         try {
-            const specialties = await getCachedSpecialties();
+            const specialties = await getCachedSpecialties(); // still uses local cache wrapper
             const text = specialties.length
                 ? specialties
                     .map((s) => {
@@ -464,12 +462,12 @@ Returns:
         },
     }, async (params) => {
         try {
-            const query = { date: params.date };
-            if (params.branch_id !== undefined)
-                query["branch_id"] = params.branch_id;
-            if (params.service_id !== undefined)
-                query["service_id"] = params.service_id;
-            const raw = await makeApiRequest(`marketplace/therapists/${params.therapist_id}/hours`, "GET", undefined, query);
+            const raw = await apiGetTherapistHours({
+                therapist_id: params.therapist_id,
+                date: params.date,
+                branch_id: params.branch_id,
+                service_id: params.service_id,
+            });
             // Normalise — API may return array or { data: [...] } or { hours: [...] }
             const slots = Array.isArray(raw)
                 ? raw
@@ -539,7 +537,10 @@ Returns:
         },
     }, async (params) => {
         try {
-            const raw = await makeApiRequest(`marketplace/therapists/${params.therapist_id}/branches/${params.branch_id}/days`, "GET");
+            const raw = await apiGetTherapistAvailableDays({
+                therapist_id: params.therapist_id,
+                branch_id: params.branch_id,
+            });
             // Normalise — API may return array or { data: [...] } or { days: [...] }
             const days = Array.isArray(raw)
                 ? raw

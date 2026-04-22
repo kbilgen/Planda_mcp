@@ -28,8 +28,8 @@ import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat, runChatStream } from "./workflow.js";
 import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
 import type { ChatMessage } from "./sessionStore.js";
-import { makeApiRequest } from "./services/apiClient.js";
-import type { TherapistListResponse, Therapist } from "./types.js";
+import { findTherapists } from "./services/therapistApi.js";
+import type { Therapist } from "./types.js";
 
 // ─── Therapist list cache ─────────────────────────────────────────────────────
 
@@ -40,9 +40,7 @@ async function getCachedTherapists(): Promise<Therapist[]> {
   if (therapistCache && Date.now() - therapistCache.fetchedAt < THERAPIST_CACHE_TTL_MS) {
     return therapistCache.therapists;
   }
-  const raw = await makeApiRequest<TherapistListResponse>(
-    "marketplace/therapists", "GET", undefined, { per_page: 500 }
-  );
+  const raw = await findTherapists({ per_page: 500 });
   const therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
   therapistCache = { therapists, fetchedAt: Date.now() };
   return therapists;
@@ -327,7 +325,7 @@ async function runHttp(): Promise<void> {
     })
   );
   app.options("*" as string, cors() as express.RequestHandler);
-  app.use(express.json());
+  app.use(express.json({ limit: "50kb" }));
 
   // ── GET /health ──────────────────────────────────────────────────────────────
   app.get("/health", (_req: Request, res: Response) => {

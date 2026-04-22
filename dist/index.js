@@ -26,7 +26,7 @@ import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat, runChatStream } from "./workflow.js";
 import { getHistory, saveHistory } from "./sessionStore.js";
-import { makeApiRequest } from "./services/apiClient.js";
+import { findTherapists } from "./services/therapistApi.js";
 // ─── Therapist list cache ─────────────────────────────────────────────────────
 const THERAPIST_CACHE_TTL_MS = 5 * 60 * 1000;
 let therapistCache = null;
@@ -34,7 +34,7 @@ async function getCachedTherapists() {
     if (therapistCache && Date.now() - therapistCache.fetchedAt < THERAPIST_CACHE_TTL_MS) {
         return therapistCache.therapists;
     }
-    const raw = await makeApiRequest("marketplace/therapists", "GET", undefined, { per_page: 500 });
+    const raw = await findTherapists({ per_page: 500 });
     const therapists = raw.data ?? raw.therapists ?? raw.results ?? [];
     therapistCache = { therapists, fetchedAt: Date.now() };
     return therapists;
@@ -281,7 +281,7 @@ async function runHttp() {
         exposedHeaders: ["Mcp-Session-Id"],
     }));
     app.options("*", cors());
-    app.use(express.json());
+    app.use(express.json({ limit: "50kb" }));
     // ── GET /health ──────────────────────────────────────────────────────────────
     app.get("/health", (_req, res) => {
         res.json({

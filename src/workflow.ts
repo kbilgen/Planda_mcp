@@ -9,7 +9,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import { OpenAI } from "openai";
 import { runGuardrails } from "@openai/guardrails";
 import { SYSTEM_PROMPT } from "./prompts.js";
-import { makeApiRequest } from "./services/apiClient.js";
+import {
+  findTherapists,
+  getTherapist,
+  listSpecialties,
+  getTherapistHours,
+  getTherapistAvailableDays,
+} from "./services/therapistApi.js";
 import type { ChatMessage } from "./sessionStore.js";
 
 // ─── Guardrails (OpenAI moderation — optional) ────────────────────────────────
@@ -160,27 +166,28 @@ Check returned dates to see which fall on the requested day — only recommend t
 async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   try {
     switch (name) {
-      case "find_therapists": {
-        const q: Record<string, unknown> = { page: input.page ?? 1, per_page: input.per_page ?? 50 };
-        if (input.city) q.city = input.city;
-        return JSON.stringify(await makeApiRequest("marketplace/therapists", "GET", undefined, q));
-      }
+      case "find_therapists":
+        return JSON.stringify(await findTherapists({
+          page: input.page as number | undefined,
+          per_page: input.per_page as number | undefined,
+          city: input.city as string | undefined,
+        }));
       case "get_therapist":
-        return JSON.stringify(await makeApiRequest(`marketplace/therapists/${input.id}`));
+        return JSON.stringify(await getTherapist(input.id as string | number));
       case "list_specialties":
-        return JSON.stringify(await makeApiRequest("marketplace/specialties"));
-      case "get_therapist_hours": {
-        const q: Record<string, unknown> = { date: input.date };
-        if (input.branch_id)  q.branch_id  = input.branch_id;
-        if (input.service_id) q.service_id = input.service_id;
-        return JSON.stringify(await makeApiRequest(
-          `marketplace/therapists/${input.therapist_id}/hours`, "GET", undefined, q
-        ));
-      }
+        return JSON.stringify(await listSpecialties());
+      case "get_therapist_hours":
+        return JSON.stringify(await getTherapistHours({
+          therapist_id: input.therapist_id as string | number,
+          date: input.date as string,
+          branch_id: input.branch_id as number | undefined,
+          service_id: input.service_id as number | undefined,
+        }));
       case "get_therapist_available_days":
-        return JSON.stringify(await makeApiRequest(
-          `marketplace/therapists/${input.therapist_id}/branches/${input.branch_id}/days`
-        ));
+        return JSON.stringify(await getTherapistAvailableDays({
+          therapist_id: input.therapist_id as string | number,
+          branch_id: input.branch_id as string | number,
+        }));
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
@@ -351,6 +358,16 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 const USE_CLAUDE = Boolean(process.env.ANTHROPIC_API_KEY);
+const CHAT_TIMEOUT_MS = parseInt(process.env.CHAT_TIMEOUT_MS ?? "90000", 10);
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Chat timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
 
 export async function runChat(input: ChatInput): Promise<ChatOutput> {
   const guard = await checkGuardrails(input.message);
@@ -360,7 +377,10 @@ export async function runChat(input: ChatInput): Promise<ChatOutput> {
       updatedHistory: [...input.history, { role: "user" as const, content: input.message }, { role: "assistant" as const, content: SAFE_RESPONSE }],
     };
   }
-  return USE_CLAUDE ? runClaudeChat(input) : runOpenAIChat(input);
+  return withTimeout(
+    USE_CLAUDE ? runClaudeChat(input) : runOpenAIChat(input),
+    CHAT_TIMEOUT_MS
+  );
 }
 
 export async function runChatStream(input: ChatInput, callbacks: ChatStreamCallbacks): Promise<ChatOutput> {
@@ -372,9 +392,9 @@ export async function runChatStream(input: ChatInput, callbacks: ChatStreamCallb
       updatedHistory: [...input.history, { role: "user" as const, content: input.message }, { role: "assistant" as const, content: SAFE_RESPONSE }],
     };
   }
-  if (USE_CLAUDE) return runClaudeChatStream(input, callbacks);
+  if (USE_CLAUDE) return withTimeout(runClaudeChatStream(input, callbacks), CHAT_TIMEOUT_MS);
   // OpenAI streaming fallback — non-streaming graceful degradation
-  const result = await runOpenAIChat(input);
+  const result = await withTimeout(runOpenAIChat(input), CHAT_TIMEOUT_MS);
   callbacks.onDelta?.(result.response);
   return result;
 }
