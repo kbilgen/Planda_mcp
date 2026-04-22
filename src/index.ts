@@ -445,6 +445,8 @@ async function runHttp(): Promise<void> {
     res.setHeader("X-Accel-Buffering", "no"); // Nginx proxy buffering'i kapat
     res.flushHeaders();
 
+    const keepalive = setInterval(() => { res.write(": keepalive\n\n"); }, 15000);
+
     try {
       const history = await resolveHistory(
         Array.isArray(body.history) ? body.history : null,
@@ -486,6 +488,7 @@ async function runHttp(): Promise<void> {
       console.error("[planda] /v1/assistant/chat/stream error:", err);
       sseWrite(res, "error", { error: "Assistant unavailable. Please try again." });
     } finally {
+      clearInterval(keepalive);
       res.end();
     }
   });
