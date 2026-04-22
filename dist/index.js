@@ -25,7 +25,7 @@ import express from "express";
 import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat, runChatStream } from "./workflow.js";
-import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
+import { getHistory, saveHistory } from "./sessionStore.js";
 import { makeApiRequest } from "./services/apiClient.js";
 // ─── Therapist list cache ─────────────────────────────────────────────────────
 const THERAPIST_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -205,6 +205,21 @@ async function postProcessResponse(text) {
     });
     return result;
 }
+// ─── API key guard ────────────────────────────────────────────────────────────
+// API_SECRET_KEY env var set → enforce on all chat endpoints.
+// Not set → open (development / backward-compat).
+function requireApiKey(req, res, next) {
+    const serverKey = process.env.API_SECRET_KEY;
+    if (!serverKey) {
+        next();
+        return;
+    }
+    if (req.headers["x-api-key"] === serverKey) {
+        next();
+        return;
+    }
+    res.status(401).json({ error: "Unauthorized" });
+}
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 function sseWrite(res, event, data) {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -273,12 +288,11 @@ async function runHttp() {
             status: "ok",
             server: "planda-mcp-server",
             version: "1.0.0",
-            activeSessions: sessionCount(),
         });
     });
     // ── GET /.well-known/openai-apps-challenge — ChatGPT domain verification ─────
     app.get("/.well-known/openai-apps-challenge", (_req, res) => {
-        res.type("text/plain").send("iUHUzIITTYzklgFSG5CVOvUIvi7nACSMFL0DVxLSjdU");
+        res.type("text/plain").send(process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "");
     });
     // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
     //
@@ -295,7 +309,7 @@ async function runHttp() {
     // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
     //          history yoksa → session store'dan yükle
     //
-    app.post("/v1/assistant/chat", async (req, res) => {
+    app.post("/v1/assistant/chat", requireApiKey, async (req, res) => {
         if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
             res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
             return;
@@ -341,7 +355,7 @@ async function runHttp() {
     //
     // iOS'ta: URLSession + EventSource ile parse edilir.
     //
-    app.post("/v1/assistant/chat/stream", async (req, res) => {
+    app.post("/v1/assistant/chat/stream", requireApiKey, async (req, res) => {
         if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
             res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
             return;
@@ -404,7 +418,7 @@ async function runHttp() {
         }
     });
     // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
-    app.post("/api/chat", async (req, res) => {
+    app.post("/api/chat", requireApiKey, async (req, res) => {
         if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
             res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
             return;
@@ -422,7 +436,7 @@ async function runHttp() {
         }
         catch (err) {
             console.error("[planda] /api/chat error:", err);
-            res.status(502).json({ error: String(err) });
+            res.status(502).json({ error: "Assistant unavailable. Please try again." });
         }
     });
     // ── POST /mcp — MCP JSON-RPC ─────────────────────────────────────────────────
@@ -499,6 +513,10 @@ process.on("unhandledRejection", (reason) => {
 // ─── Entry point ──────────────────────────────────────────────────────────────
 console.log("[planda] Starting up — Node", process.version);
 console.log("[planda] PORT:", process.env.PORT ?? "3000 (default)");
+if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    console.error("[planda] FATAL: OPENAI_API_KEY or ANTHROPIC_API_KEY must be set");
+    process.exit(1);
+}
 const transportMode = (process.env.TRANSPORT ?? "http").toLowerCase();
 if (transportMode === "stdio") {
     runStdio().catch((err) => {

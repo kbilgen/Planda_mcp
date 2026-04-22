@@ -14,7 +14,7 @@ import type { ChatMessage } from "./sessionStore.js";
 
 // ─── Guardrails (OpenAI moderation — optional) ────────────────────────────────
 
-const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "placeholder" });
+const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const GUARDRAILS_CONFIG = {
   guardrails: [
@@ -84,7 +84,7 @@ function toolStatusMessage(name: string): string {
 
 // ─── Claude path ──────────────────────────────────────────────────────────────
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "placeholder" });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
 const CLAUDE_TOOLS: Anthropic.Tool[] = [
@@ -196,6 +196,8 @@ function toAnthropicMessages(history: ChatMessage[], current: string): Anthropic
   ];
 }
 
+const MAX_TOOL_ROUNDS = 10;
+
 async function runClaudeChat(input: ChatInput): Promise<ChatOutput> {
   const messages = toAnthropicMessages(input.history, input.message);
 
@@ -207,7 +209,9 @@ async function runClaudeChat(input: ChatInput): Promise<ChatOutput> {
     messages,
   });
 
+  let toolRounds = 0;
   while (response.stop_reason === "tool_use") {
+    if (++toolRounds > MAX_TOOL_ROUNDS) throw new Error("Tool call limit exceeded");
     messages.push({ role: "assistant", content: response.content });
     const toolBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
@@ -245,8 +249,10 @@ async function runClaudeChat(input: ChatInput): Promise<ChatOutput> {
 async function runClaudeChatStream(input: ChatInput, callbacks: ChatStreamCallbacks): Promise<ChatOutput> {
   const messages = toAnthropicMessages(input.history, input.message);
   let fullText = "";
+  let toolRounds = 0;
 
   while (true) {
+    if (toolRounds > MAX_TOOL_ROUNDS) throw new Error("Tool call limit exceeded");
     const stream = anthropic.messages.stream({
       model: CLAUDE_MODEL,
       max_tokens: 4096,
@@ -278,6 +284,7 @@ async function runClaudeChatStream(input: ChatInput, callbacks: ChatStreamCallba
     }
 
     // Tool round — discard any intermediate text, execute tools
+    toolRounds++;
     messages.push({ role: "assistant", content: final.content });
     const toolBlocks = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
@@ -309,7 +316,7 @@ const _openaiMcp = hostedMcpTool({
   serverLabel: "Kaan_mcp",
   allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
   requireApproval: "never",
-  serverUrl: "https://plandamcp-production.up.railway.app/mcp",
+  serverUrl: process.env.MCP_SERVER_URL ?? "https://plandamcp-production.up.railway.app/mcp",
 });
 
 const _openaiAgent = new Agent({

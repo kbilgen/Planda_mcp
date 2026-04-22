@@ -241,6 +241,17 @@ async function postProcessResponse(text: string): Promise<string> {
   return result;
 }
 
+// ─── API key guard ────────────────────────────────────────────────────────────
+// API_SECRET_KEY env var set → enforce on all chat endpoints.
+// Not set → open (development / backward-compat).
+
+function requireApiKey(req: Request, res: Response, next: express.NextFunction): void {
+  const serverKey = process.env.API_SECRET_KEY;
+  if (!serverKey) { next(); return; }
+  if (req.headers["x-api-key"] === serverKey) { next(); return; }
+  res.status(401).json({ error: "Unauthorized" });
+}
+
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 
 function sseWrite(res: Response, event: string, data: unknown): void {
@@ -324,13 +335,12 @@ async function runHttp(): Promise<void> {
       status: "ok",
       server: "planda-mcp-server",
       version: "1.0.0",
-      activeSessions: sessionCount(),
     });
   });
 
   // ── GET /.well-known/openai-apps-challenge — ChatGPT domain verification ─────
   app.get("/.well-known/openai-apps-challenge", (_req: Request, res: Response) => {
-    res.type("text/plain").send("iUHUzIITTYzklgFSG5CVOvUIvi7nACSMFL0DVxLSjdU");
+    res.type("text/plain").send(process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "");
   });
 
   // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
@@ -348,7 +358,7 @@ async function runHttp(): Promise<void> {
   // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
   //          history yoksa → session store'dan yükle
   //
-  app.post("/v1/assistant/chat", async (req: Request, res: Response) => {
+  app.post("/v1/assistant/chat", requireApiKey, async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
       return;
@@ -411,7 +421,7 @@ async function runHttp(): Promise<void> {
   //
   // iOS'ta: URLSession + EventSource ile parse edilir.
   //
-  app.post("/v1/assistant/chat/stream", async (req: Request, res: Response) => {
+  app.post("/v1/assistant/chat/stream", requireApiKey, async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
       return;
@@ -494,7 +504,7 @@ async function runHttp(): Promise<void> {
   });
 
   // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
-  app.post("/api/chat", async (req: Request, res: Response) => {
+  app.post("/api/chat", requireApiKey, async (req: Request, res: Response) => {
     if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)" });
       return;
@@ -517,7 +527,7 @@ async function runHttp(): Promise<void> {
       res.json({ response: text });
     } catch (err) {
       console.error("[planda] /api/chat error:", err);
-      res.status(502).json({ error: String(err) });
+      res.status(502).json({ error: "Assistant unavailable. Please try again." });
     }
   });
 
@@ -596,6 +606,11 @@ process.on("unhandledRejection", (reason) => {
 
 console.log("[planda] Starting up — Node", process.version);
 console.log("[planda] PORT:", process.env.PORT ?? "3000 (default)");
+
+if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+  console.error("[planda] FATAL: OPENAI_API_KEY or ANTHROPIC_API_KEY must be set");
+  process.exit(1);
+}
 
 const transportMode = (process.env.TRANSPORT ?? "http").toLowerCase();
 

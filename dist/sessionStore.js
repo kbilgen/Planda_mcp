@@ -52,11 +52,10 @@ function trim(history) {
 export async function getHistory(sessionId) {
     if (redis) {
         try {
-            const raw = await redis.get(KEY_PREFIX + sessionId);
+            // GETEX: atomically read + reset TTL in one round-trip (sliding window)
+            const raw = await redis.getex(KEY_PREFIX + sessionId, "EX", SESSION_TTL_SEC);
             if (!raw)
                 return [];
-            // TTL'i yenile (sliding window)
-            await redis.expire(KEY_PREFIX + sessionId, SESSION_TTL_SEC);
             return JSON.parse(raw);
         }
         catch (err) {

@@ -10,7 +10,7 @@ import { runGuardrails } from "@openai/guardrails";
 import { SYSTEM_PROMPT } from "./prompts.js";
 import { makeApiRequest } from "./services/apiClient.js";
 // ─── Guardrails (OpenAI moderation — optional) ────────────────────────────────
-const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "placeholder" });
+const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const GUARDRAILS_CONFIG = {
     guardrails: [
         {
@@ -55,7 +55,7 @@ function toolStatusMessage(name) {
     }
 }
 // ─── Claude path ──────────────────────────────────────────────────────────────
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "placeholder" });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 const CLAUDE_TOOLS = [
     {
@@ -163,6 +163,7 @@ function toAnthropicMessages(history, current) {
         { role: "user", content: current },
     ];
 }
+const MAX_TOOL_ROUNDS = 10;
 async function runClaudeChat(input) {
     const messages = toAnthropicMessages(input.history, input.message);
     let response = await anthropic.messages.create({
@@ -172,7 +173,10 @@ async function runClaudeChat(input) {
         tools: CLAUDE_TOOLS,
         messages,
     });
+    let toolRounds = 0;
     while (response.stop_reason === "tool_use") {
+        if (++toolRounds > MAX_TOOL_ROUNDS)
+            throw new Error("Tool call limit exceeded");
         messages.push({ role: "assistant", content: response.content });
         const toolBlocks = response.content.filter((b) => b.type === "tool_use");
         const toolResults = await Promise.all(toolBlocks.map(async (block) => ({
@@ -205,7 +209,10 @@ async function runClaudeChat(input) {
 async function runClaudeChatStream(input, callbacks) {
     const messages = toAnthropicMessages(input.history, input.message);
     let fullText = "";
+    let toolRounds = 0;
     while (true) {
+        if (toolRounds > MAX_TOOL_ROUNDS)
+            throw new Error("Tool call limit exceeded");
         const stream = anthropic.messages.stream({
             model: CLAUDE_MODEL,
             max_tokens: 4096,
@@ -233,6 +240,7 @@ async function runClaudeChatStream(input, callbacks) {
             break;
         }
         // Tool round — discard any intermediate text, execute tools
+        toolRounds++;
         messages.push({ role: "assistant", content: final.content });
         const toolBlocks = final.content.filter((b) => b.type === "tool_use");
         const toolResults = await Promise.all(toolBlocks.map(async (block) => ({
@@ -257,7 +265,7 @@ const _openaiMcp = hostedMcpTool({
     serverLabel: "Kaan_mcp",
     allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
     requireApproval: "never",
-    serverUrl: "https://plandamcp-production.up.railway.app/mcp",
+    serverUrl: process.env.MCP_SERVER_URL ?? "https://plandamcp-production.up.railway.app/mcp",
 });
 const _openaiAgent = new Agent({
     name: "PlandaAssistant",
