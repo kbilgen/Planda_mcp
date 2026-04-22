@@ -281,11 +281,10 @@ Gün belirtilmişse — ZORUNLU müsaitlik doğrulaması:
 
   1. find_therapists(city=..., per_page=500) → fiziksel şubesi olan adayları bul (5-8 aday)
   2. Her aday için get_therapist_available_days(therapist_id, branch_id) çağır
-  3. Gelen tarihler içinde istenen gün (Cumartesi ise Sat, Pazartesi ise Mon vb.) VAR MI?
-     → HAYIR ise: o adayı listeden çıkar
-     → EVET ise: önerilere dahil et
-  4. Doğrulanmış adaylardan 2-3 terapist öner
-  5. Hiç uygun çıkmazsa: "İstanbul'da cumartesi müsait terapist bulunamadı." de.
+  3. Gelen tarihler içinde istenen gün var mı?
+     → O gün YOK → adayı listeden çıkar, önerme
+     → O gün VAR → öner
+  4. Hiç uygun çıkmazsa: "İstanbul'da cumartesi müsait terapist bulunamadı." de.
 
   ⚠️ KURAL: Gün belirtilmişse branches[] verisine bakarak tahmin YAPMA.
      Gerçek müsaitlik SADECE get_therapist_available_days ile doğrulanır.
