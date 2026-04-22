@@ -101,16 +101,21 @@ const CLAUDE_TOOLS: Anthropic.Tool[] = [
   {
     name: "find_therapists",
     description: `Search licensed therapists from Planda (planda.org). Call this FIRST for any therapist search.
-Trigger: user asks for a therapist, mentions anxiety/depression/trauma/burnout/relationship issues or any mental health struggle.
-Fetch first — filter AI-side. Use per_page=500 to get the full catalogue.
-Server-side filter: city (in-person only). All others (gender, price, specialty, online) filter AI-side.
+Server-side filters (use these to reduce result set):
+  - city: in-person sessions only
+  - specialty_id: from list_specialties tool (e.g. 26 = Kaygı, 18 = Depresyon)
+  - service_id: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi
+Use specialty_id and service_id whenever known — smaller results = faster and cheaper.
+All other filters (gender, price, approach, online) apply AI-side.
 ⚠️ NEVER suggest therapist names not returned by this tool.`,
     input_schema: {
       type: "object" as const,
       properties: {
-        city:     { type: "string", description: "City name for in-person sessions (e.g. İstanbul). Omit for online." },
-        page:     { type: "number", description: "Page number (default 1)" },
-        per_page: { type: "number", description: "Results per page. Use 500 for full catalogue." },
+        city:         { type: "string", description: "City name for in-person sessions (e.g. İstanbul). Omit for online." },
+        page:         { type: "number", description: "Page number (default 1)" },
+        per_page:     { type: "number", description: "Results per page (default 50, max 500)" },
+        specialty_id: { type: "number", description: "Filter by specialty ID from list_specialties (e.g. 26=Kaygı, 18=Depresyon)" },
+        service_id:   { type: "number", description: "Filter by service: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi" },
       },
     },
   },
@@ -335,13 +340,15 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
 const GEMINI_TOOLS: FunctionDeclaration[] = [
   {
     name: "find_therapists",
-    description: "Search licensed therapists from Planda. Call this FIRST. Use per_page=100 to get full catalogue. Only city filter works server-side; filter all others AI-side.",
+    description: "Search licensed therapists from Planda. Call this FIRST. Use specialty_id and service_id to filter server-side for smaller, faster results.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
-        city:     { type: SchemaType.STRING, description: "City for in-person sessions. Omit for online." },
-        page:     { type: SchemaType.NUMBER, description: "Page number (default 1)" },
-        per_page: { type: SchemaType.NUMBER, description: "Results per page, use 100 for full catalogue" },
+        city:         { type: SchemaType.STRING, description: "City for in-person sessions. Omit for online." },
+        page:         { type: SchemaType.NUMBER, description: "Page number (default 1)" },
+        per_page:     { type: SchemaType.NUMBER, description: "Results per page (default 50)" },
+        specialty_id: { type: SchemaType.NUMBER, description: "Filter by specialty ID (e.g. 26=Kaygı, 18=Depresyon)" },
+        service_id:   { type: SchemaType.NUMBER, description: "Filter by service: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi" },
       },
     },
   },

@@ -45,14 +45,25 @@ const PaginationSchema = z.object({
     .describe("Results per page (1–10000, default 50). Use 100 to fetch all therapists in one call (~59 total)."),
 });
 
-// Only confirmed-working filter params (tested via /api/debug/params):
-// - city: confirmed working
-// - online, gender, min_price, max_price, specialties, order_by: ALL ignored by API (return full 59)
+// Confirmed server-side filter params:
+// - city: works
+// - specialty_id: works (e.g. 26=Kaygı, 18=Depresyon)
+// - service_id: works (63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi)
 const FilterSchema = z.object({
   city: z
     .string()
     .optional()
-    .describe('Filter by city name, e.g. "İstanbul", "Ankara". Only confirmed working filter.'),
+    .describe('Filter by city name, e.g. "İstanbul", "Ankara".'),
+  specialty_id: z
+    .number()
+    .int()
+    .optional()
+    .describe("Filter by specialty ID from list_specialties (e.g. 26=Kaygı, 18=Depresyon, 35=Travma)."),
+  service_id: z
+    .number()
+    .int()
+    .optional()
+    .describe("Filter by service ID: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi."),
 });
 
 const FormatSchema = z.object({
@@ -290,9 +301,10 @@ WHEN TO CALL THIS TOOL — trigger on any of these signals:
 
 Always call this FIRST — do not ask clarifying questions before fetching. Fetch first, filter on AI side.
 
-Working server-side filters:
-  - city: "İstanbul", "Ankara" etc. (in-person sessions only — omit for online)
-  - per_page: use 500 to get the full catalogue in one call
+Working server-side filters (use these to reduce result set):
+  - city: "İstanbul", "Ankara" etc. (in-person only — omit for online)
+  - specialty_id: from list_specialties (e.g. 26=Kaygı, 18=Depresyon, 35=Travma)
+  - service_id: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi
 
 Filter AI-side after fetching (these params are ignored by the API):
   - online/in-person → branches[].type === "online" | "physical"
@@ -320,6 +332,8 @@ Returns per therapist:
           page: params.page,
           per_page: params.per_page,
           city: params.city,
+          specialty_id: params.specialty_id,
+          service_id: params.service_id,
         });
 
         let output = normaliseListResponse(raw, params.page, params.per_page);

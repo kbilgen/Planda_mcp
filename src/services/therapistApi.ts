@@ -10,12 +10,16 @@ export async function findTherapists(params: {
   page?: number;
   per_page?: number;
   city?: string;
+  specialty_id?: number;
+  service_id?: number;
 }): Promise<TherapistListResponse> {
   const query: Record<string, unknown> = {
     page: params.page ?? 1,
     per_page: params.per_page ?? 50,
   };
-  if (params.city) query["city"] = params.city;
+  if (params.city)         query["city"]         = params.city;
+  if (params.specialty_id) query["specialty_id"] = params.specialty_id;
+  if (params.service_id)   query["service_id"]   = params.service_id;
   return makeApiRequest<TherapistListResponse>("marketplace/therapists", "GET", undefined, query);
 }
 
