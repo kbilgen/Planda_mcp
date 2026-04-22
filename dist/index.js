@@ -226,7 +226,10 @@ Primary workflow:
   4. get_therapist_hours(therapist_id, date, branch_id) — find open slots on a date
 
 Never recommend a therapist for a specific approach (BDT, EMDR, etc.) without confirming via get_therapist approaches[].
-Never fabricate therapist data — always use live tool results.`;
+
+⛔ NEVER invent or suggest therapist names from training knowledge.
+Every therapist name, profile, or detail MUST come from a find_therapists call made in the current conversation.
+If the tool has not been called yet, call it first — do not guess or fabricate.`;
 function createMcpServer() {
     const server = new McpServer({
         name: "Planda Therapist Finder",
