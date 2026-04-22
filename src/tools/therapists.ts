@@ -18,6 +18,7 @@ import {
   listSpecialties as apiListSpecialties,
   getTherapistHours as apiGetTherapistHours,
   getTherapistAvailableDays as apiGetTherapistAvailableDays,
+  getActiveCities as apiGetActiveCities,
 } from "../services/therapistApi.js";
 import { CHARACTER_LIMIT } from "../constants.js";
 import {
@@ -681,6 +682,57 @@ Returns:
         return {
           content: [{ type: "text", text: lines.join("\n") }],
           structuredContent: { days },
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
+      }
+    }
+  );
+
+  // ── 6. get_active_cities ─────────────────────────────────────────────────────
+  server.registerTool(
+    "get_active_cities",
+    {
+      title: "Get Active Cities",
+      description: `Returns the list of cities where Planda therapists are currently active.
+
+Use this to:
+  - Validate or normalise a city name the user mentioned (e.g. "istanbul" → "İstanbul")
+  - Suggest available cities when the user hasn't specified one
+  - Confirm whether in-person therapy is available in a given city
+
+Returns:
+  Array of city names (Turkish, correctly capitalised).`,
+      inputSchema: z.object({}).strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      try {
+        const raw = await apiGetActiveCities();
+        const cities: unknown[] = Array.isArray(raw)
+          ? raw
+          : Array.isArray((raw as { data?: unknown[] }).data)
+          ? (raw as { data: unknown[] }).data
+          : [];
+
+        if (!cities.length) {
+          return { content: [{ type: "text", text: "Aktif şehir listesi alınamadı." }] };
+        }
+
+        const names = cities.map((c) => {
+          if (typeof c === "string") return c;
+          const obj = c as Record<string, unknown>;
+          return String(obj["name"] ?? obj["city"] ?? JSON.stringify(c));
+        });
+
+        return {
+          content: [{ type: "text", text: `# Planda Aktif Şehirler\n\n${names.map((n) => `- ${n}`).join("\n")}` }],
+          structuredContent: { cities: names },
         };
       } catch (error) {
         return { content: [{ type: "text", text: handleApiError(error) }], isError: true };

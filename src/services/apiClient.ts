@@ -5,13 +5,6 @@
 import axios, { AxiosError } from "axios";
 import { API_BASE_URL, REQUEST_TIMEOUT_MS } from "../constants.js";
 
-/**
- * Generic HTTP request helper for the Planda API.
- *
- * Authentication: pass PLANDA_API_KEY via environment variable.  If present it
- * is sent as a Bearer token in the Authorization header. For public endpoints
- * (like the marketplace therapists list) no token is required.
- */
 export async function makeApiRequest<T>(
   endpoint: string,
   method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
@@ -22,11 +15,6 @@ export async function makeApiRequest<T>(
     "Content-Type": "application/json",
     Accept: "application/json",
   };
-
-  const apiKey = process.env.PLANDA_API_KEY;
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
 
   const response = await axios({
     method,

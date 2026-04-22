@@ -125,6 +125,11 @@ Kullanılabilir tool'lar:
 - get_therapist_available_days  ← müsait GÜNLERİ bulmak için (saat sormadan önce)
 - get_therapist_hours           ← belirli bir tarihte müsait saatleri bulmak için
 - list_specialties              ← specialty isimlerinden emin değilsen (opsiyonel)
+- get_active_cities             ← kullanıcının yazdığı şehri doğrulamak veya normalize etmek için
+                                   Kullanıcı "istanbul", "ankara", "izmir" gibi küçük harfli veya
+                                   eksik karakterli şehir yazdıysa API'den doğru yazımı bul.
+                                   Şehir listesi gelmişse find_therapists city parametresine
+                                   API'nin döndürdüğü ismı olduğu gibi ver (ör. "İstanbul").
 
 MÜSAİT GÜN VE SAAT SORGUSU AKIŞI
 

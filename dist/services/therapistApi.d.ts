@@ -7,6 +7,8 @@ export declare function findTherapists(params: {
     page?: number;
     per_page?: number;
     city?: string;
+    specialty_id?: number;
+    service_id?: number;
 }): Promise<TherapistListResponse>;
 export declare function getTherapist(id: string | number): Promise<Therapist | {
     data: Therapist;
@@ -22,4 +24,5 @@ export declare function getTherapistAvailableDays(params: {
     therapist_id: string | number;
     branch_id: string | number;
 }): Promise<unknown>;
+export declare function getActiveCities(): Promise<unknown>;
 //# sourceMappingURL=therapistApi.d.ts.map

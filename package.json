@@ -15,8 +15,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
-    "@google/generative-ai": "^0.24.1",
     "@modelcontextprotocol/sdk": "^1.6.1",
     "@openai/agents": "^0.8.2",
     "@openai/guardrails": "^0.2.1",

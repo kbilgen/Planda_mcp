@@ -320,8 +320,8 @@ async function runHttp() {
     //          history yoksa → session store'dan yükle
     //
     app.post("/v1/assistant/chat", requireApiKey, async (req, res) => {
-        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
-            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)" });
+        if (!process.env.OPENAI_API_KEY) {
+            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
             return;
         }
         const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
@@ -366,8 +366,8 @@ async function runHttp() {
     // iOS'ta: URLSession + EventSource ile parse edilir.
     //
     app.post("/v1/assistant/chat/stream", requireApiKey, async (req, res) => {
-        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
-            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)" });
+        if (!process.env.OPENAI_API_KEY) {
+            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
             return;
         }
         const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
@@ -429,8 +429,8 @@ async function runHttp() {
     });
     // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
     app.post("/api/chat", requireApiKey, async (req, res) => {
-        if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
-            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)" });
+        if (!process.env.OPENAI_API_KEY) {
+            res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
             return;
         }
         const { message, history } = req.body;
@@ -559,8 +559,8 @@ process.on("unhandledRejection", (reason) => {
 // ─── Entry point ──────────────────────────────────────────────────────────────
 console.log("[planda] Starting up — Node", process.version);
 console.log("[planda] PORT:", process.env.PORT ?? "3000 (default)");
-if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
-    console.error("[planda] FATAL: OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY must be set");
+if (!process.env.OPENAI_API_KEY) {
+    console.error("[planda] FATAL: OPENAI_API_KEY must be set");
     process.exit(1);
 }
 const transportMode = (process.env.TRANSPORT ?? "http").toLowerCase();

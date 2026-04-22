@@ -10,6 +10,10 @@ export async function findTherapists(params) {
     };
     if (params.city)
         query["city"] = params.city;
+    if (params.specialty_id)
+        query["specialty_id"] = params.specialty_id;
+    if (params.service_id)
+        query["service_id"] = params.service_id;
     return makeApiRequest("marketplace/therapists", "GET", undefined, query);
 }
 export async function getTherapist(id) {
@@ -28,5 +32,8 @@ export async function getTherapistHours(params) {
 }
 export async function getTherapistAvailableDays(params) {
     return makeApiRequest(`marketplace/therapists/${params.therapist_id}/branches/${params.branch_id}/days`);
+}
+export async function getActiveCities() {
+    return makeApiRequest("marketplace/cities/active");
 }
 //# sourceMappingURL=therapistApi.js.map

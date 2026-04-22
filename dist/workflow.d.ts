@@ -1,8 +1,5 @@
 /**
- * Planda Assistant — Workflow
- *
- * ANTHROPIC_API_KEY set → Claude (claude-haiku-4-5-20251001 default)
- * Otherwise            → OpenAI Agents SDK (gpt-4.1-mini default)
+ * Planda Assistant — Workflow (OpenAI Agents SDK)
  */
 import type { ChatMessage } from "./sessionStore.js";
 export interface ChatInput {

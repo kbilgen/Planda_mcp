@@ -56,3 +56,7 @@ export async function getTherapistAvailableDays(params: {
     `marketplace/therapists/${params.therapist_id}/branches/${params.branch_id}/days`
   );
 }
+
+export async function getActiveCities(): Promise<unknown> {
+  return makeApiRequest<unknown>("marketplace/cities/active");
+}

@@ -10,7 +10,7 @@
  */
 import { z } from "zod";
 import { handleApiError } from "../services/apiClient.js";
-import { findTherapists, getTherapist, listSpecialties as apiListSpecialties, getTherapistHours as apiGetTherapistHours, getTherapistAvailableDays as apiGetTherapistAvailableDays, } from "../services/therapistApi.js";
+import { findTherapists, getTherapist, listSpecialties as apiListSpecialties, getTherapistHours as apiGetTherapistHours, getTherapistAvailableDays as apiGetTherapistAvailableDays, getActiveCities as apiGetActiveCities, } from "../services/therapistApi.js";
 import { CHARACTER_LIMIT } from "../constants.js";
 import { ResponseFormat, } from "../types.js";
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
@@ -29,14 +29,25 @@ const PaginationSchema = z.object({
         .default(50)
         .describe("Results per page (1–10000, default 50). Use 100 to fetch all therapists in one call (~59 total)."),
 });
-// Only confirmed-working filter params (tested via /api/debug/params):
-// - city: confirmed working
-// - online, gender, min_price, max_price, specialties, order_by: ALL ignored by API (return full 59)
+// Confirmed server-side filter params:
+// - city: works
+// - specialty_id: works (e.g. 26=Kaygı, 18=Depresyon)
+// - service_id: works (63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi)
 const FilterSchema = z.object({
     city: z
         .string()
         .optional()
-        .describe('Filter by city name, e.g. "İstanbul", "Ankara". Only confirmed working filter.'),
+        .describe('Filter by city name, e.g. "İstanbul", "Ankara".'),
+    specialty_id: z
+        .number()
+        .int()
+        .optional()
+        .describe("Filter by specialty ID from list_specialties (e.g. 26=Kaygı, 18=Depresyon, 35=Travma)."),
+    service_id: z
+        .number()
+        .int()
+        .optional()
+        .describe("Filter by service ID: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi."),
 });
 const FormatSchema = z.object({
     response_format: z
@@ -237,9 +248,10 @@ WHEN TO CALL THIS TOOL — trigger on any of these signals:
 
 Always call this FIRST — do not ask clarifying questions before fetching. Fetch first, filter on AI side.
 
-Working server-side filters:
-  - city: "İstanbul", "Ankara" etc. (in-person sessions only — omit for online)
-  - per_page: use 500 to get the full catalogue in one call
+Working server-side filters (use these to reduce result set):
+  - city: "İstanbul", "Ankara" etc. (in-person only — omit for online)
+  - specialty_id: from list_specialties (e.g. 26=Kaygı, 18=Depresyon, 35=Travma)
+  - service_id: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi
 
 Filter AI-side after fetching (these params are ignored by the API):
   - online/in-person → branches[].type === "online" | "physical"
@@ -266,6 +278,8 @@ Returns per therapist:
                 page: params.page,
                 per_page: params.per_page,
                 city: params.city,
+                specialty_id: params.specialty_id,
+                service_id: params.service_id,
             });
             let output = normaliseListResponse(raw, params.page, params.per_page);
             // Strip large bio fields before character limit check — prevents truncation of list
@@ -566,6 +580,51 @@ Returns:
             return {
                 content: [{ type: "text", text: lines.join("\n") }],
                 structuredContent: { days },
+            };
+        }
+        catch (error) {
+            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
+        }
+    });
+    // ── 6. get_active_cities ─────────────────────────────────────────────────────
+    server.registerTool("get_active_cities", {
+        title: "Get Active Cities",
+        description: `Returns the list of cities where Planda therapists are currently active.
+
+Use this to:
+  - Validate or normalise a city name the user mentioned (e.g. "istanbul" → "İstanbul")
+  - Suggest available cities when the user hasn't specified one
+  - Confirm whether in-person therapy is available in a given city
+
+Returns:
+  Array of city names (Turkish, correctly capitalised).`,
+        inputSchema: z.object({}).strict(),
+        annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        },
+    }, async () => {
+        try {
+            const raw = await apiGetActiveCities();
+            const cities = Array.isArray(raw)
+                ? raw
+                : Array.isArray(raw.data)
+                    ? raw.data
+                    : [];
+            if (!cities.length) {
+                return { content: [{ type: "text", text: "Aktif şehir listesi alınamadı." }] };
+            }
+            const names = cities.map((c) => {
+                if (typeof c === "string")
+                    return c;
+                const obj = c;
+                return String(obj["name"] ?? obj["city"] ?? JSON.stringify(c));
+            });
+            return {
+                content: [{ type: "text", text: `# Planda Aktif Şehirler\n\n${names.map((n) => `- ${n}`).join("\n")}` }],
+                structuredContent: { cities: names },
             };
         }
         catch (error) {
