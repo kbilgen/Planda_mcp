@@ -156,11 +156,17 @@ branch_id ve service_id seçimi — ADIM 2'den önce netleştir:
 
   Servis (service_id):
   • Tek servis varsa → onu kullan, sorma
-  • Birden fazla servis varsa → services[].name ile sor:
-      "Hangi hizmet için randevu arıyorsunuz? Bireysel Terapi / Çift ve Evlilik Terapisi"
+  • Birden fazla servis varsa → önce konuşma bağlamından çıkarmaya çalış:
+      "kaygı", "depresyon", "travma", "bireysel" → Bireysel Terapi
+      "eşim", "partnerim", "ilişkimiz", "çift", "evlilik" → Çift ve Evlilik Terapisi
+      "çocuğum", "ergen" → çocuk/ergen kategorisindeki servis
+  • Bağlamdan çıkarılamazsa → teknik isim KULLANMA, sade Türkçeyle sor:
+      "Kendiniz için mi, partnerinizle birlikte mi görüşmek istiyorsunuz?"
+      "Bireysel destek mi, çift terapisi mi arıyorsunuz?"
+  • Kullanıcı cevabını services[].name ile eşleştir → service_id'yi belirle
 
   ⚠️ Hem şube hem servis netleşmeden get_therapist_available_days ÇAĞIRMA.
-  ⚠️ İkisi aynı mesajda sorulabilir: "Hangi şubede ve hangi hizmet için randevu arıyorsunuz?"
+  ⚠️ İkisi aynı mesajda sorulabilir: "Nişantaşı mı Göztepe mi, kendiniz için mi partnerinizle mi?"
 
 Slotlar boşsa: "X tarihinde müsait saat bulunamadı, başka bir tarih denememi ister misin?" de.
 Müsait gün yoksa:
