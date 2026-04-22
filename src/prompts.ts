@@ -303,9 +303,9 @@ Gün belirtilmişse — ZORUNLU müsaitlik doğrulaması:
      Gerçek müsaitlik SADECE get_therapist_available_days ile doğrulanır.
      API'den gelen tarihler arasında istenen güne denk gelenler varsa o terapist müsaittir.
 
-  ⚠️ TARİH SINIRI KURALI: API'den gelen tarih listesinden sadece bugünden itibaren
-     en fazla 14 gün (2 hafta) içindeki tarihlere bak. Daha uzak tarihleri göz ardı et.
-     Kullanıcıya sadece önümüzdeki 2 haftadaki müsait günleri göster.
+  ⚠️ TARİH SINIRI KURALI: API'den gelen tarih listesinden belirtilen güne (ör. cumartesi)
+     denk gelen ilk 2 tarihi kullan. Tüm listeyi gösterme — sadece en yakın 2 tarihi al.
+     Kullanıcıya o 2 tarihi belirt: "25 Nisan ve 2 Mayıs cumartesi müsait."
 
 Yaklaşım sorgusu varsa — zorunlu adımlar:
   1. find_therapists(per_page=500) → 5-8 aday belirle
