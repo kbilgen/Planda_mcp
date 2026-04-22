@@ -293,18 +293,15 @@ Gün belirtilmişse — ZORUNLU müsaitlik doğrulaması:
 
   1. find_therapists(city=..., per_page=500) → fiziksel şubesi olan adayları bul (5-8 aday)
   2. Her aday için get_therapist_available_days(therapist_id, branch_id) çağır
-  3. Gelen tarihler içinde istenen gün var mı?
-     → O gün YOK → adayı listeden çıkar, önerme
-     → O gün VAR → öner
-  4. Hiç uygun çıkmazsa: "İstanbul'da cumartesi müsait terapist bulunamadı." de.
+  3. Gelen tarihler içinde istenen güne (ör. cumartesi) denk gelen ilk 2 tarihi bul
+  4. Bulunan her tarih için get_therapist_hours(therapist_id, date, branch_id) çağır
+     → Saat slotu VARSA → terapist o gün gerçekten müsait → öner
+     → Saat slotu YOKSA → o tarih boş görünse de slot yok → önerme
+  5. Hiç uygun çıkmazsa: "İstanbul'da cumartesi müsait terapist bulunamadı." de.
 
-  ⚠️ KURAL: Gün belirtilmişse branches[] verisine bakarak tahmin YAPMA.
-     Gerçek müsaitlik SADECE get_therapist_available_days ile doğrulanır.
-     API'den gelen tarihler arasında istenen güne denk gelenler varsa o terapist müsaittir.
-
-  ⚠️ TARİH SINIRI KURALI: API'den gelen tarih listesinden belirtilen güne (ör. cumartesi)
-     denk gelen ilk 2 tarihi kullan. Tüm listeyi gösterme — sadece en yakın 2 tarihi al.
-     Kullanıcıya o 2 tarihi belirt: "25 Nisan ve 2 Mayıs cumartesi müsait."
+  ⚠️ KURAL: get_therapist_available_days tek başına yeterli DEĞİL.
+     O API tarihin "takvimde açık" olduğunu söyler ama gerçek randevu slotu olmayabilir.
+     Kesin doğrulama ancak get_therapist_hours ile slot kontrolü yapılarak yapılır.
 
 Yaklaşım sorgusu varsa — zorunlu adımlar:
   1. find_therapists(per_page=500) → 5-8 aday belirle
