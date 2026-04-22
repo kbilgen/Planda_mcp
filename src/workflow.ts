@@ -433,57 +433,10 @@ async function runGeminiChat(input: ChatInput): Promise<ChatOutput> {
 }
 
 async function runGeminiChatStream(input: ChatInput, callbacks: ChatStreamCallbacks): Promise<ChatOutput> {
-  const model = geminiClient.getGenerativeModel({
-    model: GEMINI_MODEL,
-    systemInstruction: SYSTEM_PROMPT,
-    tools: [{ functionDeclarations: GEMINI_TOOLS }],
-    toolConfig: { functionCallingConfig: { mode: FunctionCallingMode.AUTO } },
-  });
-
-  const chat = model.startChat({ history: toGeminiHistory(input.history) });
-  let fullText = "";
-  let toolRounds = 0;
-  let streamResult = await chat.sendMessageStream(input.message);
-
-  while (true) {
-    if (toolRounds > MAX_TOOL_ROUNDS) throw new Error("Tool call limit exceeded");
-
-    const finalResponse = await streamResult.response;
-    const functionCalls = finalResponse.functionCalls();
-
-    if (!functionCalls?.length) {
-      for await (const chunk of streamResult.stream) {
-        const delta = chunk.text();
-        if (delta) {
-          fullText += delta;
-          callbacks.onDelta?.(delta);
-        }
-      }
-      break;
-    }
-
-    toolRounds++;
-    callbacks.onStatus?.(toolStatusMessage(functionCalls[0].name));
-
-    const toolParts: Part[] = await Promise.all(
-      functionCalls.map(async (call) => ({
-        functionResponse: {
-          name: call.name,
-          response: { result: JSON.parse(await executeTool(call.name, call.args as Record<string, unknown>)) },
-        },
-      }))
-    );
-    streamResult = await chat.sendMessageStream(toolParts);
-  }
-
-  return {
-    response: fullText,
-    updatedHistory: [
-      ...input.history,
-      { role: "user" as const, content: input.message },
-      { role: "assistant" as const, content: fullText },
-    ],
-  };
+  // Gemini tool-call + streaming can't be interleaved cleanly — run full chat, deliver as one delta
+  const result = await runGeminiChat(input);
+  callbacks.onDelta?.(result.response);
+  return result;
 }
 
 // ─── OpenAI path (fallback) ───────────────────────────────────────────────────
