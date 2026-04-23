@@ -298,3 +298,46 @@ test("applyAiSideFilters: specialty_name + gender + city narrows correctly", () 
   assert.equal(result.length, 1);
   assert.equal(result[0].id, 1);
 });
+
+// ─── verifySpecialtyMatch (padding hallucination detection) ───────────────────
+// These tests verify the topic → specialty mapping by calling the guard
+// directly with synthetic response strings. Roster is mocked via the real
+// Planda API call inside verifySpecialtyMatch, which requires network — so
+// we SKIP these in offline CI by default. Run with EVAL_LIVE=1 when needed.
+
+import { verifySpecialtyMatch } from "../src/guards/hallucinationGuard.js";
+
+const LIVE = process.env.EVAL_LIVE === "1";
+
+test("verifySpecialtyMatch: no topic inferred → no violations", { skip: !LIVE }, async () => {
+  const violations = await verifySpecialtyMatch(
+    "merhaba",
+    "**Ekin Alankuş** — Uzman Psikolog\n[[expert:ekin_alankus]]"
+  );
+  assert.equal(violations.length, 0);
+});
+
+test("verifySpecialtyMatch: no recommendations → no violations", { skip: !LIVE }, async () => {
+  const violations = await verifySpecialtyMatch(
+    "ilişkide sorun yaşıyorum",
+    "Hangi şehirde görüşmek istersin?"
+  );
+  assert.equal(violations.length, 0);
+});
+
+test("verifySpecialtyMatch: ilişki topic + Ekin (no İlişkisel) → violation", { skip: !LIVE }, async () => {
+  const violations = await verifySpecialtyMatch(
+    "ilişkide sorun yaşıyorum, terapist öner",
+    "**Ekin Alankuş**\n[[expert:ekin_alankus]]"
+  );
+  assert.ok(violations.length >= 1, "expected specialty_mismatch violation");
+  assert.equal(violations[0].kind, "specialty_mismatch");
+});
+
+test("verifySpecialtyMatch: ilişki topic + Yıldız (has İlişkisel) → pass", { skip: !LIVE }, async () => {
+  const violations = await verifySpecialtyMatch(
+    "ilişkide sorun yaşıyorum",
+    "**Yıldız Hacıevliyagil Cüceloğlu**\n[[expert:yildiz_hacievliyagil_cuceloglu]]"
+  );
+  assert.equal(violations.length, 0);
+});

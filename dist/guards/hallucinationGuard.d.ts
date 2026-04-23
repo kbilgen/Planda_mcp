@@ -6,7 +6,7 @@
  * violations. Callers log them; future work can add a retry loop.
  */
 export interface HallucinationViolation {
-    kind: "unknown_therapist" | "unknown_username";
+    kind: "unknown_therapist" | "unknown_username" | "specialty_mismatch";
     value: string;
 }
 /**
@@ -44,4 +44,12 @@ export declare function shouldUseFallback(violations: HallucinationViolation[], 
  * names where a fuzzy match exists. Surviving violations are true hallucinations.
  */
 export declare function verifyResponse(text: string): Promise<HallucinationViolation[]>;
+/**
+ * Check that every therapist recommended in the response actually covers at
+ * least one topic the user asked about. Returns violations for mismatches.
+ *
+ * Runs only when the user message carries a detectable topic — vague queries
+ * like "terapist arıyorum" skip this check.
+ */
+export declare function verifySpecialtyMatch(userMessage: string, response: string): Promise<HallucinationViolation[]>;
 //# sourceMappingURL=hallucinationGuard.d.ts.map

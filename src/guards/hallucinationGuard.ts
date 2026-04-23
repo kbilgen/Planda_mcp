@@ -10,7 +10,7 @@ import { findTherapists } from "../services/therapistApi.js";
 import type { Therapist } from "../types.js";
 
 export interface HallucinationViolation {
-  kind: "unknown_therapist" | "unknown_username";
+  kind: "unknown_therapist" | "unknown_username" | "specialty_mismatch";
   value: string;
 }
 
@@ -157,5 +157,88 @@ export async function verifyResponse(text: string): Promise<HallucinationViolati
     }
   }
 
+  return violations;
+}
+
+// ─── Specialty-match verification ─────────────────────────────────────────────
+//
+// "Padding" hallucination: model recommends a therapist whose specialties[] do
+// NOT cover the user's requested topic. The therapist is real, the name is
+// real — but the recommendation is wrong. Example seen in prod:
+//   User: "ilişkide sorun var" → bot recommends Ekin Alankuş
+//   Ekin's specialties[] = [Travmatik Deneyim, Kaygı] — no İlişkisel match
+//
+// This guard extracts topic keywords from the user message, cross-checks
+// each recommended therapist's specialties[], and flags mismatches.
+
+// Topic → substring(s) that should appear in specialties[].name (normTR form)
+const TOPIC_SPECIALTY_MAP: Record<string, { userWords: string[]; specialtySubstr: string[] }> = {
+  iliski:    { userWords: ["iliski", "evlilik", "partner", "es ", "esim", "cift", "boşan", "bosan"], specialtySubstr: ["iliskisel"] },
+  kaygi:     { userWords: ["kaygi", "anksiyete", "panik", "fobi", "korku"],                         specialtySubstr: ["kaygi", "anksiyete"] },
+  depresyon: { userWords: ["depresyon", "mutsuz", "umutsuz"],                                       specialtySubstr: ["depresyon"] },
+  travma:    { userWords: ["travma", "taciz", "istismar"],                                          specialtySubstr: ["travmatik", "travma"] },
+  yas:       { userWords: ["yas", "kayip", "ayrilik"],                                              specialtySubstr: ["kayip", "yas"] },
+  ergen:     { userWords: ["ergen", "cocuk", "cocugum", "çocuk"],                                   specialtySubstr: ["ergen", "cocuk", "akran"] },
+  iletisim:  { userWords: ["iletisim", "anlasma"],                                                  specialtySubstr: ["iletisim"] },
+  ofke:      { userWords: ["ofke", "sinir", "saldirgan"],                                           specialtySubstr: ["duygu yonetimi", "ofke"] },
+  yeme:      { userWords: ["yeme", "anoreksi", "bulimi", "beden algisi"],                           specialtySubstr: ["yeme", "beden algisi"] },
+};
+
+function extractUserTopics(userMessage: string): string[] {
+  const n = normTR(userMessage);
+  const topics: string[] = [];
+  for (const [key, { userWords }] of Object.entries(TOPIC_SPECIALTY_MAP)) {
+    if (userWords.some((w) => n.includes(w))) topics.push(key);
+  }
+  return topics;
+}
+
+function therapistCoversTopic(t: Therapist, topic: string): boolean {
+  const rule = TOPIC_SPECIALTY_MAP[topic];
+  if (!rule) return true; // unknown topic → don't flag
+  const specialtyText = (t.specialties ?? [])
+    .map((s) => normTR(s?.name ?? ""))
+    .join(" ");
+  return rule.specialtySubstr.some((sub) => specialtyText.includes(sub));
+}
+
+/**
+ * Check that every therapist recommended in the response actually covers at
+ * least one topic the user asked about. Returns violations for mismatches.
+ *
+ * Runs only when the user message carries a detectable topic — vague queries
+ * like "terapist arıyorum" skip this check.
+ */
+export async function verifySpecialtyMatch(
+  userMessage: string,
+  response: string
+): Promise<HallucinationViolation[]> {
+  const topics = extractUserTopics(userMessage);
+  if (topics.length === 0) return []; // no topic inferred → can't evaluate
+
+  const tagPat = /\[\[expert:([^\]]+)\]\]/g;
+  const recommended = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = tagPat.exec(response)) !== null) {
+    recommended.add(m[1].trim());
+  }
+  if (recommended.size === 0) return []; // no cards → nothing to validate
+
+  const therapists = await getRoster();
+  if (therapists.length === 0) return [];
+
+  const violations: HallucinationViolation[] = [];
+  for (const slug of recommended) {
+    const t = therapists.find((x) => x.username === slug);
+    if (!t) continue; // unknown_username already handled
+
+    const covers = topics.some((topic) => therapistCoversTopic(t, topic));
+    if (!covers) {
+      violations.push({
+        kind: "specialty_mismatch",
+        value: `${slug} (user topic: ${topics.join(",")}; therapist specialties: ${(t.specialties ?? []).map((s) => s.name).join(", ") || "none"})`,
+      });
+    }
+  }
   return violations;
 }

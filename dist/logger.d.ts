@@ -13,7 +13,7 @@ export interface ToolCallLog {
     durationMs?: number;
 }
 export interface GuardViolation {
-    kind: "unknown_therapist" | "unknown_username" | "intent_mismatch" | "other";
+    kind: "unknown_therapist" | "unknown_username" | "intent_mismatch" | "specialty_mismatch" | "other";
     detail: string;
 }
 export interface TurnLog {

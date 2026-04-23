@@ -29,7 +29,7 @@ import { getHistory, saveHistory } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
-import { verifyResponse, shouldUseFallback, HALLUCINATION_FALLBACK, } from "./guards/hallucinationGuard.js";
+import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, } from "./guards/hallucinationGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 // Sentry must initialize before any other import that might throw
 initSentry();
@@ -221,7 +221,7 @@ async function postProcessResponse(text) {
     });
     return result;
 }
-async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], intent) {
+async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], intent, userMessage) {
     const violations = [];
     let hallucinations = [];
     try {
@@ -233,6 +233,34 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
     }
     for (const v of hallucinations) {
         violations.push({ kind: v.kind, detail: v.value });
+    }
+    // Specialty-match check (padding hallucination): recommended therapist has
+    // real username but specialties[] don't cover the user's topic. Log only —
+    // don't replace response (topic inference is heuristic, false positives
+    // possible). Sentry shows them as warnings for prompt-tuning visibility.
+    if (userMessage) {
+        try {
+            const specMismatch = await verifySpecialtyMatch(userMessage, rawResponse);
+            for (const v of specMismatch) {
+                violations.push({ kind: v.kind, detail: v.value });
+            }
+            if (specMismatch.length > 0) {
+                console.warn(`[guard] specialty_mismatch × ${specMismatch.length}:`, specMismatch.map((v) => v.value).join(" | "));
+                try {
+                    Sentry.captureMessage("Specialty mismatch in recommendation", {
+                        level: "warning",
+                        tags: {
+                            kind: "specialty_mismatch",
+                            mismatch_count: String(specMismatch.length),
+                        },
+                    });
+                }
+                catch { }
+            }
+        }
+        catch (err) {
+            console.error("[guard] verifySpecialtyMatch error:", err);
+        }
     }
     // Intent-aware hard block: classifier said a tool is expected, none called,
     // and the response isn't just a clarifying question. This catches intent
@@ -462,7 +490,7 @@ async function runHttp() {
         try {
             const { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history, forceToolCall });
             const processed = await postProcessResponse(rawResponse);
-            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
             const response = guarded.response;
             // Store'u async güncelle — fallback devreye girdiyse gerçek konuşmayı
             // geçmişe eklemeyelim (model kurgu isim ürettiği için), orijinali tut.
@@ -550,7 +578,7 @@ async function runHttp() {
             });
             // Post-process full text (fixes Turkish names + expert tags)
             const processed = await postProcessResponse(fullText);
-            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
             const response = guarded.response;
             // If guard or post-processing changed the text, send corrected event so
             // iOS can replace the streamed text with the final (safe) version.
@@ -613,7 +641,7 @@ async function runHttp() {
             const rawText = result.output_text ?? JSON.stringify(result);
             const processed = await postProcessResponse(rawText);
             const toolCalls = result.toolCalls;
-            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
             const text = guarded.response;
             observeTurn({
                 sessionId: "legacy-" + (req.ip ?? "unknown"),

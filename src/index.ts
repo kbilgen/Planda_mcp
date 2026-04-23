@@ -39,6 +39,7 @@ import {
 } from "./guards/intentClassifier.js";
 import {
   verifyResponse,
+  verifySpecialtyMatch,
   shouldUseFallback,
   HALLUCINATION_FALLBACK,
 } from "./guards/hallucinationGuard.js";
@@ -285,7 +286,8 @@ async function guardResponse(
   rawResponse: string,
   toolCallCount: number,
   actualToolNames: string[] = [],
-  intent?: IntentResult
+  intent?: IntentResult,
+  userMessage?: string
 ): Promise<GuardedResponse> {
   const violations: GuardViolation[] = [];
   let hallucinations: Awaited<ReturnType<typeof verifyResponse>> = [];
@@ -297,6 +299,34 @@ async function guardResponse(
   }
   for (const v of hallucinations) {
     violations.push({ kind: v.kind, detail: v.value });
+  }
+
+  // Specialty-match check (padding hallucination): recommended therapist has
+  // real username but specialties[] don't cover the user's topic. Log only —
+  // don't replace response (topic inference is heuristic, false positives
+  // possible). Sentry shows them as warnings for prompt-tuning visibility.
+  if (userMessage) {
+    try {
+      const specMismatch = await verifySpecialtyMatch(userMessage, rawResponse);
+      for (const v of specMismatch) {
+        violations.push({ kind: v.kind, detail: v.value });
+      }
+      if (specMismatch.length > 0) {
+        console.warn(`[guard] specialty_mismatch × ${specMismatch.length}:`,
+          specMismatch.map((v) => v.value).join(" | "));
+        try {
+          Sentry.captureMessage("Specialty mismatch in recommendation", {
+            level: "warning",
+            tags: {
+              kind: "specialty_mismatch",
+              mismatch_count: String(specMismatch.length),
+            },
+          });
+        } catch {}
+      }
+    } catch (err) {
+      console.error("[guard] verifySpecialtyMatch error:", err);
+    }
   }
 
   // Intent-aware hard block: classifier said a tool is expected, none called,
@@ -591,7 +621,8 @@ async function runHttp(): Promise<void> {
         processed,
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
-        intent
+        intent,
+        message
       );
       const response = guarded.response;
 
@@ -706,7 +737,8 @@ async function runHttp(): Promise<void> {
         processed,
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
-        intent
+        intent,
+        message
       );
       const response = guarded.response;
 
@@ -786,7 +818,8 @@ async function runHttp(): Promise<void> {
         processed,
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
-        intent
+        intent,
+        message
       );
       const text = guarded.response;
 

@@ -19,7 +19,12 @@ export interface ToolCallLog {
 }
 
 export interface GuardViolation {
-  kind: "unknown_therapist" | "unknown_username" | "intent_mismatch" | "other";
+  kind:
+    | "unknown_therapist"
+    | "unknown_username"
+    | "intent_mismatch"
+    | "specialty_mismatch"
+    | "other";
   detail: string;
 }
 
