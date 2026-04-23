@@ -12,7 +12,7 @@
     "clean": "rm -rf dist",
     "eval": "tsx evals/run.ts",
     "eval:judge": "tsx evals/run.ts --judge",
-    "test:unit": "node --import tsx --test 'evals/**/*.test.ts'"
+    "test:unit": "node --import tsx --test evals/classifier.test.ts evals/filters.test.ts"
   },
   "engines": {
     "node": ">=20"
