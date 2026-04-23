@@ -19,6 +19,7 @@ export type Intent =
   | "greeting"              // selam, merhaba
   | "out_of_scope"          // konu dışı
   | "clarification"         // evet/hayır/emin misin
+  | "explanation_request"   // "nasıl seçtin", "neye göre" — önceki seçimin gerekçesi
   | "unknown";
 
 export interface IntentResult {
@@ -83,6 +84,22 @@ const CLARIFY_KEYS = [
   "evet", "hayir", "tamam", "peki",
 ];
 
+// Meta / explanation request phrases — user asking HOW/WHY the model made a
+// previous choice. These are high-risk for meta-hallucination: the model
+// tends to fabricate a methodology ("approaches[]'e baktım") when in fact
+// no tool was called. Seen in Sentry event f7c0f3e9 (2026-04-23).
+//
+// Policy: route to `explanation_request` so the response guard knows this
+// turn MUST either re-call get_therapist / find_therapists OR answer with a
+// honest "I need to re-verify" fallback — never fabricate methodology.
+const EXPLANATION_PHRASES = [
+  "nasil sectin", "nasil sectiniz", "nasil buldun", "nasil buldunuz",
+  "neye gore", "hangi kritere", "hangi kriter", "hangi kritere gore",
+  "hangi olcute", "ne olcutle", "hangi baz", "kaynagin", "kaynagi ne",
+  "nerden biliyorsun", "nereden biliyorsun", "neye dayanarak",
+  "ne olcu", "hangi veri", "hangi bilgiyle",
+];
+
 function hasAny(haystack: string, keys: string[]): string[] {
   return keys.filter((k) => haystack.includes(k));
 }
@@ -90,6 +107,20 @@ function hasAny(haystack: string, keys: string[]): string[] {
 export function classifyIntent(message: string): IntentResult {
   const n = NORMALIZE(message.trim());
   if (!n) return { intent: "unknown", expectedTools: [], matched: [] };
+
+  // Disambiguation step 0: explanation / meta-justification requests.
+  // Runs first because "BDT olanları neye göre seçtin" contains the DETAIL
+  // keyword "bdt" but is really an explanation request, not a detail lookup.
+  // Expected tools: get_therapist AND find_therapists — the model must
+  // re-consult the API to answer honestly, OR fall back to a candid reply.
+  const explanationMatches = hasAny(n, EXPLANATION_PHRASES);
+  if (explanationMatches.length) {
+    return {
+      intent: "explanation_request",
+      expectedTools: ["find_therapists", "get_therapist"],
+      matched: explanationMatches,
+    };
+  }
 
   // Disambiguation step 1: "hangi terapist/psikolog/uzman" is ALWAYS search,
   // even if other availability phrases follow. Check this first so an
@@ -256,6 +287,12 @@ export function detectIntentToolMismatch(
       "ne tür", "ne tur",
       "kaç yaş", "kac yas",
       "online mi", "yüz yüze mi", "yuz yuze mi",
+      // Meta-explanation honest-fallback phrases — when the model correctly
+      // refuses to fabricate methodology and asks to re-verify instead.
+      "tekrar doğrulama", "tekrar dogrulama",
+      "güncel listeye", "guncel listeye",
+      "net hatırlamıyorum", "net hatirlamiyorum",
+      "tekrar öneri", "tekrar oneri",
     ];
     if (lastChar === "?" || clarifierPhrases.some((p) => lower.includes(p))) {
       return [];

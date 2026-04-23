@@ -234,3 +234,65 @@ test("name-lookup: single capitalized word does NOT trigger (avoid 'İstanbul' f
   const r = classifyIntent("İstanbul'da terapist");
   assert.equal(r.intent, "search_therapist");
 });
+
+// ─── Explanation / meta-justification requests (Sentry f7c0f3e9 regression) ──
+// The model tends to fabricate methodology when asked "how did you choose?".
+// These tests lock in the new explanation_request intent and its expectedTools.
+
+test("explanation: 'BDT olanları neye göre seçtin' → explanation_request, NOT therapist_detail", () => {
+  const r = classifyIntent("BDT olanları neye göre hangi kritere göre seçtin");
+  assert.equal(r.intent, "explanation_request");
+  assert.deepEqual(r.expectedTools, ["find_therapists", "get_therapist"]);
+});
+
+test("explanation: 'Bunları nasıl seçtin?' → explanation_request", () => {
+  assert.equal(classifyIntent("Bunları nasıl seçtin?").intent, "explanation_request");
+});
+
+test("explanation: 'Neye dayanarak öneriyorsun?' → explanation_request", () => {
+  assert.equal(
+    classifyIntent("Neye dayanarak öneriyorsun?").intent,
+    "explanation_request"
+  );
+});
+
+test("explanation: 'Hangi kritere göre filtreliyorsun?' → explanation_request", () => {
+  assert.equal(
+    classifyIntent("Hangi kritere göre filtreliyorsun?").intent,
+    "explanation_request"
+  );
+});
+
+test("explanation: 'Kaynağın ne?' → explanation_request", () => {
+  assert.equal(classifyIntent("Kaynağın ne?").intent, "explanation_request");
+});
+
+test("explanation: 'Nereden biliyorsun?' → explanation_request", () => {
+  assert.equal(classifyIntent("Nereden biliyorsun?").intent, "explanation_request");
+});
+
+test("NOT explanation: 'BDT yapan terapist var mı?' → search_therapist (different meaning)", () => {
+  // "neye göre" yok — BDT için arama, açıklama isteği değil
+  assert.equal(classifyIntent("BDT yapan terapist var mı?").intent, "search_therapist");
+});
+
+test("mismatch suppressed when explanation answer uses honest-fallback phrase", () => {
+  const intent = classifyIntent("BDT olanları neye göre seçtin");
+  const m = detectIntentToolMismatch(
+    intent,
+    [], // no tools called
+    "Önceki önerimin tam dayanağını şu anda tekrar doğrulamam gerekiyor — istersen güncel listeye bakıp tekrar öneri çıkarayım."
+  );
+  assert.equal(m.length, 0);
+});
+
+test("mismatch FIRED when explanation answer fabricates methodology", () => {
+  const intent = classifyIntent("BDT olanları neye göre seçtin");
+  const m = detectIntentToolMismatch(
+    intent,
+    [],
+    "approaches[] listesini kontrol ettim ve BDT yapan terapistleri filtreledim."
+  );
+  assert.equal(m.length, 1);
+  assert.match(m[0], /find_therapists|get_therapist/);
+});

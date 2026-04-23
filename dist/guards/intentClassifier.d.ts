@@ -4,7 +4,7 @@
  * Used to annotate conversation logs and detect "tool call expected but missing"
  * regressions (e.g. therapist search intent without find_therapists call).
  */
-export type Intent = "search_therapist" | "check_availability" | "therapist_detail" | "list_specialties" | "greeting" | "out_of_scope" | "clarification" | "unknown";
+export type Intent = "search_therapist" | "check_availability" | "therapist_detail" | "list_specialties" | "greeting" | "out_of_scope" | "clarification" | "explanation_request" | "unknown";
 export interface IntentResult {
     intent: Intent;
     expectedTools: string[];
