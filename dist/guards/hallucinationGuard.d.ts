@@ -26,8 +26,16 @@ export declare const HALLUCINATION_FALLBACK: string;
  *                                                  unreliable → REPLACE
  *   4. Single unknown (tool WAS called)        → could be fuzzy-match edge
  *                                                  case → keep, log only
+ *   5. Response presents therapist cards (bold
+ *      header OR expert tag) AND no tool call  → even if every name happens to
+ *                                                  exist in the roster, the fee
+ *                                                  / specialty / location
+ *                                                  details are fabricated
+ *                                                  (NODE-2 class) → REPLACE
+ *
+ *   Optional `responseText` enables rule #5; if omitted, falls back to #1–4.
  */
-export declare function shouldUseFallback(violations: HallucinationViolation[], toolCallCount: number): boolean;
+export declare function shouldUseFallback(violations: HallucinationViolation[], toolCallCount: number, responseText?: string): boolean;
 /**
  * Scan a response for therapist names (**Name** — headers) and expert tags.
  * Returns any that don't correspond to real therapists.

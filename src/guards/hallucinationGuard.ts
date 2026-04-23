@@ -78,17 +78,37 @@ export const HALLUCINATION_FALLBACK =
  *                                                  unreliable → REPLACE
  *   4. Single unknown (tool WAS called)        → could be fuzzy-match edge
  *                                                  case → keep, log only
+ *   5. Response presents therapist cards (bold
+ *      header OR expert tag) AND no tool call  → even if every name happens to
+ *                                                  exist in the roster, the fee
+ *                                                  / specialty / location
+ *                                                  details are fabricated
+ *                                                  (NODE-2 class) → REPLACE
+ *
+ *   Optional `responseText` enables rule #5; if omitted, falls back to #1–4.
  */
 export function shouldUseFallback(
   violations: HallucinationViolation[],
-  toolCallCount: number
+  toolCallCount: number,
+  responseText?: string
 ): boolean {
   const unknownTherapists = violations.filter(
     (v) => v.kind === "unknown_therapist"
   ).length;
-  if (unknownTherapists === 0) return false;
-  if (toolCallCount === 0) return true;
+  if (unknownTherapists >= 1 && toolCallCount === 0) return true;
   if (unknownTherapists >= 2) return true;
+
+  // Rule #5 — presenting therapist cards without having consulted the API
+  // means the body of each card (fee, approaches, availability) is invented
+  // even if the name itself happens to match a real therapist. This is the
+  // exact failure mode we saw in Sentry NODE-2.
+  if (toolCallCount === 0 && responseText) {
+    const hasCard =
+      /\*\*[^*\n]+\*\*\s*—/.test(responseText) ||
+      /\[\[expert:[^\]]+\]\]/.test(responseText);
+    if (hasCard) return true;
+  }
+
   return false;
 }
 

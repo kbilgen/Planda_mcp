@@ -221,7 +221,7 @@ async function postProcessResponse(text) {
     });
     return result;
 }
-async function guardResponse(rawResponse, toolCallCount) {
+async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], intent) {
     const violations = [];
     let hallucinations = [];
     try {
@@ -234,14 +234,48 @@ async function guardResponse(rawResponse, toolCallCount) {
     for (const v of hallucinations) {
         violations.push({ kind: v.kind, detail: v.value });
     }
-    if (shouldUseFallback(hallucinations, toolCallCount)) {
+    // Intent-aware hard block: classifier said a tool is expected, none called,
+    // and the response isn't just a clarifying question. This catches intent
+    // misclassification (NODE-2 class) where the response looks substantive but
+    // the backend was never consulted.
+    if (intent && toolCallCount === 0 && intent.expectedTools.length > 0) {
+        const mismatch = detectIntentToolMismatch(intent, actualToolNames, rawResponse);
+        if (mismatch.length > 0) {
+            violations.push({ kind: "intent_mismatch", detail: mismatch[0] });
+            try {
+                Sentry.captureMessage("Intent mismatch — response replaced", {
+                    level: "error",
+                    tags: {
+                        kind: "intent_mismatch_fallback",
+                        intent: intent.intent,
+                        expected_tools: intent.expectedTools.join(","),
+                        tool_count: String(toolCallCount),
+                    },
+                });
+            }
+            catch { }
+            return { response: HALLUCINATION_FALLBACK, replaced: true, violations };
+        }
+    }
+    if (shouldUseFallback(hallucinations, toolCallCount, rawResponse)) {
+        // Detect rule #5 — therapist card with no tool call (NODE-2 class) — so
+        // Sentry can distinguish this from classic unknown-name hallucinations.
+        const cardNoTool = toolCallCount === 0 &&
+            hallucinations.length === 0 &&
+            (/\*\*[^*\n]+\*\*\s*—/.test(rawResponse) ||
+                /\[\[expert:[^\]]+\]\]/.test(rawResponse));
+        if (cardNoTool) {
+            violations.push({ kind: "other", detail: "card_without_tool_call" });
+        }
         console.warn("[guard] Hallucination detected, replacing with fallback. " +
-            `unknown=${hallucinations.length} tools=${toolCallCount}`);
+            `unknown=${hallucinations.length} tools=${toolCallCount} ` +
+            `cardNoTool=${cardNoTool}`);
         try {
             Sentry.captureMessage("Hallucination detected — response replaced", {
                 level: "error",
                 tags: {
                     kind: "hallucination_fallback",
+                    trigger: cardNoTool ? "card_without_tool_call" : "unknown_therapist",
                     tool_count: String(toolCallCount),
                     unknown_count: String(hallucinations.length),
                 },
@@ -428,7 +462,7 @@ async function runHttp() {
         try {
             const { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history, forceToolCall });
             const processed = await postProcessResponse(rawResponse);
-            const guarded = await guardResponse(processed, toolCalls?.length ?? 0);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent);
             const response = guarded.response;
             // Store'u async güncelle — fallback devreye girdiyse gerçek konuşmayı
             // geçmişe eklemeyelim (model kurgu isim ürettiği için), orijinali tut.
@@ -516,7 +550,7 @@ async function runHttp() {
             });
             // Post-process full text (fixes Turkish names + expert tags)
             const processed = await postProcessResponse(fullText);
-            const guarded = await guardResponse(processed, toolCalls?.length ?? 0);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent);
             const response = guarded.response;
             // If guard or post-processing changed the text, send corrected event so
             // iOS can replace the streamed text with the final (safe) version.
@@ -579,7 +613,7 @@ async function runHttp() {
             const rawText = result.output_text ?? JSON.stringify(result);
             const processed = await postProcessResponse(rawText);
             const toolCalls = result.toolCalls;
-            const guarded = await guardResponse(processed, toolCalls?.length ?? 0);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent);
             const text = guarded.response;
             observeTurn({
                 sessionId: "legacy-" + (req.ip ?? "unknown"),
