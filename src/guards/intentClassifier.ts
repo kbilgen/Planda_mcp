@@ -35,10 +35,34 @@ const SEARCH_KEYS = [
   "online terapi", "yuz yuze", "seans",
 ];
 
-const AVAIL_KEYS = [
-  "musait", "musaitlik", "uygun", "saat", "gun", "tarih", "randevu",
-  "hafta", "yarin", "pazartesi", "sali", "carsamba", "persembe", "cuma",
-  "cumartesi", "pazar", "hangi gun", "ne zaman",
+// Availability keywords — strict phrase matching to avoid ambiguity.
+//
+// "uygun" alone is NOT here because it also means "suitable" in Turkish:
+//   "uygun saat"     → availability ✓
+//   "uygun terapist" → search (suitable therapist) ✗
+// So we require "uygun" to appear together with a time word.
+//
+// Similarly "hangi gun / saat" is availability but "hangi terapist / psikolog"
+// is search — disambiguated via the SEARCH_HANGI_PHRASES list below.
+const AVAIL_PHRASES = [
+  "musait", "musaitlik", "randevu",
+  "uygun saat", "uygun gun", "uygun tarih", "uygun zaman",
+  "hangi gun", "hangi saat", "hangi tarih",
+  "ne zaman",
+];
+
+// Day/time context words that can push a message to availability when paired
+// with a weak signal (e.g. "yarın" alone isn't availability but "yarın müsait"
+// definitely is; "pazartesi için saat" is availability).
+const TIME_WORDS = [
+  "saat", "tarih", "hafta", "yarin",
+  "pazartesi", "sali", "carsamba", "persembe", "cuma", "cumartesi", "pazar",
+];
+
+// Explicit search-intent phrases that contain the "hangi" disambiguator — these
+// are search, NOT availability, even if AVAIL_PHRASES partially matches later.
+const SEARCH_HANGI_PHRASES = [
+  "hangi terapist", "hangi psikolog", "hangi uzman", "hangi danisman",
 ];
 
 const DETAIL_KEYS = [
@@ -67,12 +91,35 @@ export function classifyIntent(message: string): IntentResult {
   const n = NORMALIZE(message.trim());
   if (!n) return { intent: "unknown", expectedTools: [], matched: [] };
 
-  const availMatches = hasAny(n, AVAIL_KEYS);
-  if (availMatches.length) {
+  // Disambiguation step 1: "hangi terapist/psikolog/uzman" is ALWAYS search,
+  // even if other availability phrases follow. Check this first so an
+  // accidental "uygun" or "saat" later in the sentence can't redirect.
+  const searchHangi = hasAny(n, SEARCH_HANGI_PHRASES);
+  if (searchHangi.length) {
+    const detailMatches = hasAny(n, DETAIL_KEYS);
+    return {
+      intent: "search_therapist",
+      expectedTools: detailMatches.length
+        ? ["find_therapists", "get_therapist"]
+        : ["find_therapists"],
+      matched: [...searchHangi, ...detailMatches],
+    };
+  }
+
+  // Availability: a phrase from AVAIL_PHRASES (already disambiguated).
+  // Time words alone ("yarın") aren't enough — they need a stronger signal.
+  const availPhraseMatches = hasAny(n, AVAIL_PHRASES);
+  const timeWordMatches = hasAny(n, TIME_WORDS);
+  const isAvailability =
+    availPhraseMatches.length > 0 ||
+    // "yarın var mı / uygun mu" style — time word + question marker
+    (timeWordMatches.length > 0 && (n.includes(" var mi") || n.includes(" var?") || n.endsWith("var mi")));
+
+  if (isAvailability) {
     return {
       intent: "check_availability",
       expectedTools: ["get_therapist_available_days", "get_therapist_hours"],
-      matched: availMatches,
+      matched: [...availPhraseMatches, ...timeWordMatches],
     };
   }
 
@@ -144,6 +191,24 @@ export function classifyIntent(message: string): IntentResult {
   if (oos.length) return { intent: "out_of_scope", expectedTools: [], matched: oos };
 
   return { intent: "unknown", expectedTools: [], matched: [] };
+}
+
+/**
+ * Returns true when the classifier is confident a tool call is required —
+ * used to flip Runner.modelSettings.toolChoice to "required" for this turn.
+ *
+ * Only fires for search/availability intents with enough context; vague
+ * searches ("terapi arıyorum") are left on auto so the model can ask
+ * clarifying questions.
+ */
+export function shouldForceToolCall(intent: IntentResult): boolean {
+  // Non-empty expectedTools = classifier thinks the model should call a tool.
+  // This is already gated by hasEnoughInfo in classifyIntent for searches.
+  if (intent.expectedTools.length === 0) return false;
+  // Only force for search flows. Availability questions usually already
+  // reach the tool; forcing there has less marginal value and risks
+  // false-forcing on reconfirmation chit-chat ("emin misin?").
+  return intent.intent === "search_therapist";
 }
 
 /**

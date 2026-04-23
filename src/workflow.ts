@@ -60,6 +60,12 @@ async function checkGuardrails(text: string): Promise<{ blocked: boolean; reason
 export interface ChatInput {
   message: string;
   history: ChatMessage[];
+  /**
+   * When true, force the model to make at least one tool call before
+   * responding. Set by callers when the intent classifier detects a
+   * specific search where the model shouldn't respond from memory.
+   */
+  forceToolCall?: boolean;
 }
 
 export interface ChatOutput {
@@ -115,6 +121,19 @@ function getOpenAIRunner(): InstanceType<typeof Runner> {
   return _openaiRunner;
 }
 
+// Forced runner — used when the intent classifier signals that the current
+// message REQUIRES a tool call (e.g. specific therapist search with city +
+// specialty). Prevents the model from answering from memory/context.
+let _openaiRunnerForced: InstanceType<typeof Runner> | null = null;
+function getOpenAIRunnerForced(): InstanceType<typeof Runner> {
+  if (!_openaiRunnerForced) {
+    _openaiRunnerForced = new Runner({
+      modelSettings: { toolChoice: "required" },
+    });
+  }
+  return _openaiRunnerForced;
+}
+
 async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
   return withTrace("PlandaChat", async () => {
     const items: AgentInputItem[] = [
@@ -125,7 +144,8 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
       ),
       { role: "user", content: [{ type: "input_text", text: input.message }] },
     ];
-    const result = await getOpenAIRunner().run(getOpenAIAgent(), items);
+    const runner = input.forceToolCall ? getOpenAIRunnerForced() : getOpenAIRunner();
+    const result = await runner.run(getOpenAIAgent(), items);
     const text = String(result.finalOutput ?? "");
     const toolCalls = extractToolCalls(result);
 
@@ -193,6 +213,7 @@ export async function runChatStream(input: ChatInput, callbacks: ChatStreamCallb
 export type WorkflowInput = {
   input_as_text: string;
   history?: { role: "user" | "assistant"; content: string }[];
+  forceToolCall?: boolean;
 };
 
 export const runWorkflow = async (workflow: WorkflowInput) => {
@@ -200,7 +221,11 @@ export const runWorkflow = async (workflow: WorkflowInput) => {
   const last = all[all.length - 1];
   const history: ChatMessage[] =
     last?.role === "user" && last?.content === workflow.input_as_text ? all.slice(0, -1) : all;
-  const result = await runChat({ message: workflow.input_as_text, history });
+  const result = await runChat({
+    message: workflow.input_as_text,
+    history,
+    forceToolCall: workflow.forceToolCall,
+  });
   return {
     output_text: result.response,
     toolCalls: result.toolCalls,

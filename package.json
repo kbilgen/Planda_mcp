@@ -11,7 +11,8 @@
     "dev": "tsx watch src/index.ts",
     "clean": "rm -rf dist",
     "eval": "tsx evals/run.ts",
-    "eval:judge": "tsx evals/run.ts --judge"
+    "eval:judge": "tsx evals/run.ts --judge",
+    "test:unit": "node --import tsx --test 'evals/**/*.test.ts'"
   },
   "engines": {
     "node": ">=20"

@@ -28,8 +28,8 @@ import { runWorkflow, runChat, runChatStream } from "./workflow.js";
 import { getHistory, saveHistory } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
-import { classifyIntent, detectIntentToolMismatch } from "./guards/intentClassifier.js";
-import { verifyResponse } from "./guards/hallucinationGuard.js";
+import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
+import { verifyResponse, shouldUseFallback, HALLUCINATION_FALLBACK, } from "./guards/hallucinationGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 // Sentry must initialize before any other import that might throw
 initSentry();
@@ -221,29 +221,68 @@ async function postProcessResponse(text) {
     });
     return result;
 }
+async function guardResponse(rawResponse, toolCallCount) {
+    const violations = [];
+    let hallucinations = [];
+    try {
+        hallucinations = await verifyResponse(rawResponse);
+    }
+    catch (err) {
+        console.error("[guard] verifyResponse error:", err);
+        return { response: rawResponse, replaced: false, violations: [] };
+    }
+    for (const v of hallucinations) {
+        violations.push({ kind: v.kind, detail: v.value });
+    }
+    if (shouldUseFallback(hallucinations, toolCallCount)) {
+        console.warn("[guard] Hallucination detected, replacing with fallback. " +
+            `unknown=${hallucinations.length} tools=${toolCallCount}`);
+        try {
+            Sentry.captureMessage("Hallucination detected — response replaced", {
+                level: "error",
+                tags: {
+                    kind: "hallucination_fallback",
+                    tool_count: String(toolCallCount),
+                    unknown_count: String(hallucinations.length),
+                },
+            });
+        }
+        catch { }
+        return { response: HALLUCINATION_FALLBACK, replaced: true, violations };
+    }
+    return { response: rawResponse, replaced: false, violations };
+}
 // ─── Observability pipeline ──────────────────────────────────────────────────
 //
 // Called after every chat turn (buffered + stream + legacy).
 // Collects intent, guard violations, tool calls; writes JSONL + stdout.
 async function observeTurn(opts) {
     const toolCalls = opts.toolCalls ?? [];
-    const intent = classifyIntent(opts.userMessage);
-    const violations = [];
+    const intent = opts.precomputedIntent ?? classifyIntent(opts.userMessage);
+    const violations = [...(opts.precomputedViolations ?? [])];
     // Intent → tool-call mismatch (e.g. search intent without find_therapists).
     // Response is passed so clarifying questions don't falsely trigger a mismatch.
     const mismatch = detectIntentToolMismatch(intent, toolCalls.map((c) => c.name), opts.response);
     for (const m of mismatch) {
         violations.push({ kind: "intent_mismatch", detail: m });
     }
-    // Hallucination check — names/usernames must exist in roster
-    try {
-        const halluc = await verifyResponse(opts.response);
-        for (const v of halluc) {
-            violations.push({ kind: v.kind, detail: v.value });
+    // Hallucination — if caller already ran guardResponse, skip re-verify.
+    if (!opts.precomputedViolations) {
+        try {
+            const halluc = await verifyResponse(opts.response);
+            for (const v of halluc) {
+                violations.push({ kind: v.kind, detail: v.value });
+            }
+        }
+        catch (err) {
+            console.error("[observe] verifyResponse error:", err);
         }
     }
-    catch (err) {
-        console.error("[observe] verifyResponse error:", err);
+    if (opts.hallucinationReplaced) {
+        violations.push({
+            kind: "other",
+            detail: "response_replaced_with_fallback",
+        });
     }
     await logTurn({
         ts: new Date().toISOString(),
@@ -381,16 +420,26 @@ async function runHttp() {
         }
         const sessionId = extractSessionId(body, req);
         const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
+        const intent = classifyIntent(message);
+        const forceToolCall = shouldForceToolCall(intent);
         const startedAt = Date.now();
         try {
-            const { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history });
-            const response = await postProcessResponse(rawResponse);
-            // Store'u async güncelle — response'u bekletme
-            saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            const { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history, forceToolCall });
+            const processed = await postProcessResponse(rawResponse);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0);
+            const response = guarded.response;
+            // Store'u async güncelle — fallback devreye girdiyse gerçek konuşmayı
+            // geçmişe eklemeyelim (model kurgu isim ürettiği için), orijinali tut.
+            if (!guarded.replaced) {
+                saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            }
             observeTurn({
                 sessionId, userMessage: message, response,
                 toolCalls, latencyMs: Date.now() - startedAt, model,
                 endpoint: "/v1/assistant/chat",
+                precomputedIntent: intent,
+                precomputedViolations: guarded.violations,
+                hallucinationReplaced: guarded.replaced,
             }).catch(() => { });
             res.json({
                 response,
@@ -450,11 +499,13 @@ async function runHttp() {
         catch {
             clearInterval(keepalive);
         } }, 15000);
+        const intent = classifyIntent(message);
+        const forceToolCall = shouldForceToolCall(intent);
         const startedAt = Date.now();
         try {
             const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
             let fullText = "";
-            const { updatedHistory, toolCalls, model } = await runChatStream({ message, history }, {
+            const { updatedHistory, toolCalls, model } = await runChatStream({ message, history, forceToolCall }, {
                 onStatus: (msg) => sseWrite(res, "status", { message: msg }),
                 onDelta: (delta) => {
                     fullText += delta;
@@ -462,16 +513,24 @@ async function runHttp() {
                 },
             });
             // Post-process full text (fixes Turkish names + expert tags)
-            const response = await postProcessResponse(fullText);
-            // If post-processing changed the text, send corrected event so iOS can replace
+            const processed = await postProcessResponse(fullText);
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0);
+            const response = guarded.response;
+            // If guard or post-processing changed the text, send corrected event so
+            // iOS can replace the streamed text with the final (safe) version.
             if (response !== fullText) {
                 sseWrite(res, "corrected", { response, session_id: sessionId });
             }
-            saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            if (!guarded.replaced) {
+                saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            }
             observeTurn({
                 sessionId, userMessage: message, response,
                 toolCalls, latencyMs: Date.now() - startedAt, model,
                 endpoint: "/v1/assistant/chat/stream",
+                precomputedIntent: intent,
+                precomputedViolations: guarded.violations,
+                hallucinationReplaced: guarded.replaced,
             }).catch(() => { });
             sseWrite(res, "done", {
                 response,
@@ -506,19 +565,31 @@ async function runHttp() {
             res.status(400).json({ error: "message is required" });
             return;
         }
+        const intent = classifyIntent(message);
+        const forceToolCall = shouldForceToolCall(intent);
         const startedAt = Date.now();
         try {
-            const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
+            const result = await runWorkflow({
+                input_as_text: message,
+                history: history ?? [],
+                forceToolCall,
+            });
             const rawText = result.output_text ?? JSON.stringify(result);
-            const text = await postProcessResponse(rawText);
+            const processed = await postProcessResponse(rawText);
+            const toolCalls = result.toolCalls;
+            const guarded = await guardResponse(processed, toolCalls?.length ?? 0);
+            const text = guarded.response;
             observeTurn({
                 sessionId: "legacy-" + (req.ip ?? "unknown"),
                 userMessage: message,
                 response: text,
-                toolCalls: result.toolCalls,
+                toolCalls,
                 latencyMs: Date.now() - startedAt,
                 model: result.model,
                 endpoint: "/api/chat",
+                precomputedIntent: intent,
+                precomputedViolations: guarded.violations,
+                hallucinationReplaced: guarded.replaced,
             }).catch(() => { });
             res.json({ response: text });
         }

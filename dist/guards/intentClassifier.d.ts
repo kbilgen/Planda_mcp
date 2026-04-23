@@ -12,6 +12,15 @@ export interface IntentResult {
 }
 export declare function classifyIntent(message: string): IntentResult;
 /**
+ * Returns true when the classifier is confident a tool call is required —
+ * used to flip Runner.modelSettings.toolChoice to "required" for this turn.
+ *
+ * Only fires for search/availability intents with enough context; vague
+ * searches ("terapi arıyorum") are left on auto so the model can ask
+ * clarifying questions.
+ */
+export declare function shouldForceToolCall(intent: IntentResult): boolean;
+/**
  * Returns violations when expected tools were not called.
  *
  * Ignores the mismatch when the assistant responded with a clarifying question

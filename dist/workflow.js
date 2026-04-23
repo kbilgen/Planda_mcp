@@ -79,6 +79,18 @@ function getOpenAIRunner() {
         _openaiRunner = new Runner();
     return _openaiRunner;
 }
+// Forced runner — used when the intent classifier signals that the current
+// message REQUIRES a tool call (e.g. specific therapist search with city +
+// specialty). Prevents the model from answering from memory/context.
+let _openaiRunnerForced = null;
+function getOpenAIRunnerForced() {
+    if (!_openaiRunnerForced) {
+        _openaiRunnerForced = new Runner({
+            modelSettings: { toolChoice: "required" },
+        });
+    }
+    return _openaiRunnerForced;
+}
 async function runOpenAIChat(input) {
     return withTrace("PlandaChat", async () => {
         const items = [
@@ -87,7 +99,8 @@ async function runOpenAIChat(input) {
                 : { role: "assistant", status: "completed", content: [{ type: "output_text", text: m.content }] }),
             { role: "user", content: [{ type: "input_text", text: input.message }] },
         ];
-        const result = await getOpenAIRunner().run(getOpenAIAgent(), items);
+        const runner = input.forceToolCall ? getOpenAIRunnerForced() : getOpenAIRunner();
+        const result = await runner.run(getOpenAIAgent(), items);
         const text = String(result.finalOutput ?? "");
         const toolCalls = extractToolCalls(result);
         // Diagnostic: full key dump of raw items to identify hosted MCP tool name
@@ -148,7 +161,11 @@ export const runWorkflow = async (workflow) => {
     const all = workflow.history ?? [];
     const last = all[all.length - 1];
     const history = last?.role === "user" && last?.content === workflow.input_as_text ? all.slice(0, -1) : all;
-    const result = await runChat({ message: workflow.input_as_text, history });
+    const result = await runChat({
+        message: workflow.input_as_text,
+        history,
+        forceToolCall: workflow.forceToolCall,
+    });
     return {
         output_text: result.response,
         toolCalls: result.toolCalls,

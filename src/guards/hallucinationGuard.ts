@@ -59,6 +59,40 @@ function fuzzyMatchesAnyTherapist(query: string, therapists: Therapist[]): boole
 }
 
 /**
+ * Safe fallback shown when hallucination is detected with high confidence.
+ * Kept generic so it works for any user query without revealing details.
+ */
+export const HALLUCINATION_FALLBACK =
+  "Bu soruda bir aksaklık yaşadım ve doğru bilgi üretemedim. Lütfen mesajını " +
+  "tekrar gönderebilir misin? Aradığın terapisti birlikte bulalım.";
+
+/**
+ * Decides whether a response should be replaced with the safe fallback based
+ * on verification output. Logic (intentionally conservative):
+ *
+ *   1. No violations                           → keep response
+ *   2. Any unknown_therapist AND no tool call  → strong hallucination signal,
+ *                                                  model answered from memory
+ *                                                  → REPLACE
+ *   3. >= 2 unknown_therapist violations       → multiple fabricated names,
+ *                                                  unreliable → REPLACE
+ *   4. Single unknown (tool WAS called)        → could be fuzzy-match edge
+ *                                                  case → keep, log only
+ */
+export function shouldUseFallback(
+  violations: HallucinationViolation[],
+  toolCallCount: number
+): boolean {
+  const unknownTherapists = violations.filter(
+    (v) => v.kind === "unknown_therapist"
+  ).length;
+  if (unknownTherapists === 0) return false;
+  if (toolCallCount === 0) return true;
+  if (unknownTherapists >= 2) return true;
+  return false;
+}
+
+/**
  * Scan a response for therapist names (**Name** — headers) and expert tags.
  * Returns any that don't correspond to real therapists.
  *

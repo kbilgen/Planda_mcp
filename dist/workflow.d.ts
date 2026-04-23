@@ -6,6 +6,12 @@ import type { ToolCallLog } from "./logger.js";
 export interface ChatInput {
     message: string;
     history: ChatMessage[];
+    /**
+     * When true, force the model to make at least one tool call before
+     * responding. Set by callers when the intent classifier detects a
+     * specific search where the model shouldn't respond from memory.
+     */
+    forceToolCall?: boolean;
 }
 export interface ChatOutput {
     response: string;
@@ -25,6 +31,7 @@ export type WorkflowInput = {
         role: "user" | "assistant";
         content: string;
     }[];
+    forceToolCall?: boolean;
 };
 export declare const runWorkflow: (workflow: WorkflowInput) => Promise<{
     output_text: string;
