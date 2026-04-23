@@ -142,21 +142,35 @@ export function extractToolCalls(result: unknown): ToolCallLog[] {
         output?: unknown;
         call_id?: string;
         id?: string;
+        // Hosted MCP additional fields from OpenAI Responses API
+        server_label?: string;
+        tool_name?: string;
+        providerData?: { name?: string; arguments?: unknown; output?: unknown };
       };
       const type = String(raw.type ?? wrapper.type ?? "");
       if (debug) typeTrace.push(type);
 
-      // A call is anything with (name AND arguments) OR known call types
-      const hasCallShape = typeof raw.name === "string" && raw.arguments !== undefined;
+      // Actual tool name: for hosted_tool_call with name="mcp_call", the real
+      // tool name is in tool_name / providerData.name / arguments.name.
+      const providerName = raw.providerData?.name;
+      const wrappedName = raw.name;
+      let toolName = wrappedName;
+      if (wrappedName === "mcp_call" || wrappedName === "mcp_list_tools") {
+        toolName = raw.tool_name ?? providerName ?? wrappedName;
+      }
+
+      const hasCallShape = typeof raw.name === "string";
       const isKnownCallType =
         type === "function_call" ||
         type === "mcp_call" ||
         type === "tool_call" ||
+        type === "hosted_tool_call" ||
         type.endsWith("tool_call_item") ||
         type.includes("mcp_call");
       const isOutput =
         type === "function_call_output" ||
         type === "mcp_call_output" ||
+        type === "hosted_tool_call_output" ||
         type.endsWith("tool_call_output_item") ||
         type === "tool_call_output";
 
@@ -164,25 +178,20 @@ export function extractToolCalls(result: unknown): ToolCallLog[] {
         const out =
           typeof raw.output === "string"
             ? raw.output
-            : JSON.stringify(raw.output ?? "");
-        // attach to the call with matching call_id if available, else last
-        const callId = raw.call_id;
-        const target = callId
-          ? calls.find((c) => c.name && seenIds.has(callId!) === false ? false : false) ?? calls[calls.length - 1]
-          : calls[calls.length - 1];
+            : JSON.stringify(raw.output ?? raw.providerData?.output ?? "");
+        const target = calls[calls.length - 1];
         if (target && !target.output) target.output = out;
         continue;
       }
 
       if (hasCallShape || isKnownCallType) {
-        const id = raw.call_id ?? raw.id ?? `${raw.name}-${calls.length}`;
+        const id = raw.call_id ?? raw.id ?? `${toolName}-${calls.length}`;
         if (seenIds.has(id)) continue;
         seenIds.add(id);
+        const rawArgs = raw.arguments ?? raw.providerData?.arguments;
         const args =
-          typeof raw.arguments === "string"
-            ? raw.arguments
-            : JSON.stringify(raw.arguments ?? {});
-        calls.push({ name: raw.name ?? type ?? "unknown", arguments: args });
+          typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs ?? {});
+        calls.push({ name: toolName ?? type ?? "unknown", arguments: args });
       }
     }
   }

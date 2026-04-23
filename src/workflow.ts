@@ -129,21 +129,26 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
     const text = String(result.finalOutput ?? "");
     const toolCalls = extractToolCalls(result);
 
-    // Diagnostic: dump raw item shapes once per run so we can see what hosted
-    // MCP tool calls actually look like in @openai/agents SDK. Toggle via env.
-    if (process.env.DEBUG_TOOL_CALLS === "1" && toolCalls.length === 0) {
+    // Diagnostic: full key dump of raw items to identify hosted MCP tool name
+    // field. Toggle via DEBUG_TOOL_CALLS=1.
+    if (process.env.DEBUG_TOOL_CALLS === "1") {
       const probe = {
+        extracted: toolCalls.length,
         newItems: Array.isArray((result as { newItems?: unknown[] }).newItems)
-          ? (result as { newItems?: unknown[] }).newItems!.map((i: unknown) => {
-              const w = i as { type?: string; rawItem?: { type?: string; name?: string } };
-              return { wrapperType: w.type, rawType: w.rawItem?.type, name: w.rawItem?.name };
+          ? (result as { newItems?: unknown[] }).newItems!.slice(0, 6).map((i: unknown) => {
+              const w = i as { type?: string; rawItem?: Record<string, unknown> };
+              const r = w.rawItem ?? {};
+              return {
+                wType: w.type,
+                rType: r.type,
+                rName: r.name,
+                rKeys: Object.keys(r),
+                rSample: JSON.stringify(r).slice(0, 400),
+              };
             })
           : null,
-        historyLen: Array.isArray((result as { history?: unknown[] }).history)
-          ? (result as { history?: unknown[] }).history!.length
-          : null,
       };
-      console.log("[workflow] no tools extracted, raw probe:", JSON.stringify(probe));
+      console.log("[workflow] raw probe:", JSON.stringify(probe));
     }
 
     const model = (process.env.OPENAI_MODEL ?? "gpt-4.1-mini");
