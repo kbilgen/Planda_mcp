@@ -446,7 +446,9 @@ function createMcpServer(): McpServer {
     }
   );
   registerTherapistTools(server);
-  return server;
+  // Wrap for Sentry AI → MCP Insights: captures a span per tool call with
+  // args, output, and timing. No-op when Sentry isn't initialized.
+  return Sentry.wrapMcpServerWithSentry(server);
 }
 
 // ─── stdio transport ──────────────────────────────────────────────────────────

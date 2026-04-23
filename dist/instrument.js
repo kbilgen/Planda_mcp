@@ -17,7 +17,10 @@
  *   SENTRY_DSN           — required to activate; when absent, no-op
  *   SENTRY_ENVIRONMENT   — default: NODE_ENV
  *   SENTRY_RELEASE       — optional release tag
- *   SENTRY_TRACES_RATE   — 0..1 sample rate for performance spans (default 0.2)
+ *   SENTRY_TRACES_RATE   — 0..1 sample rate for performance spans.
+ *                          Default 1.0 — MCP monitoring requires tracing
+ *                          enabled and recommends capturing all spans.
+ *                          Lower in prod if cost becomes a concern (0.2-0.5).
  */
 import * as Sentry from "@sentry/node";
 const dsn = process.env.SENTRY_DSN;
@@ -26,7 +29,11 @@ if (dsn) {
         dsn,
         environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? "production",
         release: process.env.SENTRY_RELEASE,
-        tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_RATE ?? "0.2"),
+        tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_RATE ?? "1.0"),
+        // Note: PII stays disabled. Our observability pipeline explicitly attaches
+        // userMessage / response via Sentry scope; enabling sendDefaultPii would
+        // additionally capture HTTP request data (IPs, cookies, headers) which
+        // isn't useful for our quality-review use case and widens the PII surface.
         sendDefaultPii: false,
         // Default integrations active — include HTTP, Express, MCP instrumentation
     });

@@ -17,7 +17,10 @@
  *   SENTRY_DSN           — required to activate; when absent, no-op
  *   SENTRY_ENVIRONMENT   — default: NODE_ENV
  *   SENTRY_RELEASE       — optional release tag
- *   SENTRY_TRACES_RATE   — 0..1 sample rate for performance spans (default 0.2)
+ *   SENTRY_TRACES_RATE   — 0..1 sample rate for performance spans.
+ *                          Default 1.0 — MCP monitoring requires tracing
+ *                          enabled and recommends capturing all spans.
+ *                          Lower in prod if cost becomes a concern (0.2-0.5).
  */
 export {};
 //# sourceMappingURL=instrument.d.ts.map
