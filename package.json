@@ -9,7 +9,9 @@
     "build": "tsc",
     "postinstall": "npm run build",
     "dev": "tsx watch src/index.ts",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "eval": "tsx evals/run.ts",
+    "eval:judge": "tsx evals/run.ts --judge"
   },
   "engines": {
     "node": ">=20"

@@ -3,3 +3,5 @@ node_modules/
 .env.local
 *.log
 npm-debug.log*
+logs/
+evals/reports/

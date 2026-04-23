@@ -8,6 +8,8 @@ import { hostedMcpTool, Agent, Runner, withTrace } from "@openai/agents";
 import type { AgentInputItem } from "@openai/agents";
 import { SYSTEM_PROMPT } from "./prompts.js";
 import type { ChatMessage } from "./sessionStore.js";
+import type { ToolCallLog } from "./logger.js";
+import { extractToolCalls } from "./logger.js";
 
 // ─── Guardrails (optional — skipped if OPENAI_API_KEY missing) ───────────────
 
@@ -63,6 +65,8 @@ export interface ChatInput {
 export interface ChatOutput {
   response: string;
   updatedHistory: ChatMessage[];
+  toolCalls?: ToolCallLog[];
+  model?: string;
 }
 
 export interface ChatStreamCallbacks {
@@ -123,9 +127,13 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
     ];
     const result = await getOpenAIRunner().run(getOpenAIAgent(), items);
     const text = String(result.finalOutput ?? "");
+    const toolCalls = extractToolCalls(result);
+    const model = (process.env.OPENAI_MODEL ?? "gpt-4.1-mini");
     return {
       response: text,
       updatedHistory: [...input.history, { role: "user" as const, content: input.message }, { role: "assistant" as const, content: text }],
+      toolCalls,
+      model,
     };
   });
 }
@@ -170,5 +178,9 @@ export const runWorkflow = async (workflow: WorkflowInput) => {
   const history: ChatMessage[] =
     last?.role === "user" && last?.content === workflow.input_as_text ? all.slice(0, -1) : all;
   const result = await runChat({ message: workflow.input_as_text, history });
-  return { output_text: result.response };
+  return {
+    output_text: result.response,
+    toolCalls: result.toolCalls,
+    model: result.model,
+  };
 };

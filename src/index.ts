@@ -30,6 +30,9 @@ import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
 import type { ChatMessage } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
 import type { Therapist } from "./types.js";
+import { logTurn, type GuardViolation, type ToolCallLog } from "./logger.js";
+import { classifyIntent, detectIntentToolMismatch } from "./guards/intentClassifier.js";
+import { verifyResponse } from "./guards/hallucinationGuard.js";
 
 // ─── Therapist list cache ─────────────────────────────────────────────────────
 
@@ -253,6 +256,56 @@ async function postProcessResponse(text: string): Promise<string> {
   return result;
 }
 
+// ─── Observability pipeline ──────────────────────────────────────────────────
+//
+// Called after every chat turn (buffered + stream + legacy).
+// Collects intent, guard violations, tool calls; writes JSONL + stdout.
+
+async function observeTurn(opts: {
+  sessionId: string;
+  userMessage: string;
+  response: string;
+  toolCalls?: ToolCallLog[];
+  latencyMs: number;
+  model?: string;
+  endpoint: string;
+  error?: string;
+}): Promise<void> {
+  const toolCalls = opts.toolCalls ?? [];
+  const intent = classifyIntent(opts.userMessage);
+  const violations: GuardViolation[] = [];
+
+  // Intent → tool-call mismatch (e.g. search intent without find_therapists)
+  const mismatch = detectIntentToolMismatch(intent, toolCalls.map((c) => c.name));
+  for (const m of mismatch) {
+    violations.push({ kind: "intent_mismatch", detail: m });
+  }
+
+  // Hallucination check — names/usernames must exist in roster
+  try {
+    const halluc = await verifyResponse(opts.response);
+    for (const v of halluc) {
+      violations.push({ kind: v.kind, detail: v.value });
+    }
+  } catch (err) {
+    console.error("[observe] verifyResponse error:", err);
+  }
+
+  await logTurn({
+    ts: new Date().toISOString(),
+    sessionId: opts.sessionId,
+    userMessage: opts.userMessage,
+    response: opts.response,
+    toolCalls,
+    latencyMs: opts.latencyMs,
+    model: opts.model,
+    endpoint: opts.endpoint,
+    intent: intent.intent,
+    violations: violations.length ? violations : undefined,
+    error: opts.error,
+  });
+}
+
 // ─── API key guard ────────────────────────────────────────────────────────────
 // API_SECRET_KEY env var set → enforce on all chat endpoints.
 // Not set → open (development / backward-compat).
@@ -401,14 +454,22 @@ async function runHttp(): Promise<void> {
       sessionId
     );
 
+    const startedAt = Date.now();
     try {
-      const { response: rawResponse, updatedHistory } = await runChat({ message, history });
+      const { response: rawResponse, updatedHistory, toolCalls, model } =
+        await runChat({ message, history });
       const response = await postProcessResponse(rawResponse);
 
       // Store'u async güncelle — response'u bekletme
       saveHistory(sessionId, updatedHistory).catch((err) =>
         console.error("[planda] saveHistory error:", err)
       );
+
+      observeTurn({
+        sessionId, userMessage: message, response,
+        toolCalls, latencyMs: Date.now() - startedAt, model,
+        endpoint: "/v1/assistant/chat",
+      }).catch(() => {});
 
       res.json({
         response,
@@ -418,6 +479,12 @@ async function runHttp(): Promise<void> {
       });
     } catch (err) {
       console.error("[planda] /v1/assistant/chat error:", err);
+      observeTurn({
+        sessionId, userMessage: message, response: "",
+        latencyMs: Date.now() - startedAt,
+        endpoint: "/v1/assistant/chat",
+        error: err instanceof Error ? err.message : String(err),
+      }).catch(() => {});
       res.status(502).json({ error: "Assistant unavailable. Please try again." });
     }
   });
@@ -469,6 +536,7 @@ async function runHttp(): Promise<void> {
 
     const keepalive = setInterval(() => { try { res.write(": keepalive\n\n"); } catch { clearInterval(keepalive); } }, 15000);
 
+    const startedAt = Date.now();
     try {
       const history = await resolveHistory(
         Array.isArray(body.history) ? body.history : null,
@@ -477,7 +545,7 @@ async function runHttp(): Promise<void> {
 
       let fullText = "";
 
-      const { updatedHistory } = await runChatStream(
+      const { updatedHistory, toolCalls, model } = await runChatStream(
         { message, history },
         {
           onStatus: (msg) => sseWrite(res, "status", { message: msg }),
@@ -500,6 +568,12 @@ async function runHttp(): Promise<void> {
         console.error("[planda] saveHistory error:", err)
       );
 
+      observeTurn({
+        sessionId, userMessage: message, response,
+        toolCalls, latencyMs: Date.now() - startedAt, model,
+        endpoint: "/v1/assistant/chat/stream",
+      }).catch(() => {});
+
       sseWrite(res, "done", {
         response,
         message: response,
@@ -508,6 +582,12 @@ async function runHttp(): Promise<void> {
       });
     } catch (err) {
       console.error("[planda] /v1/assistant/chat/stream error:", err);
+      observeTurn({
+        sessionId, userMessage: message, response: "",
+        latencyMs: Date.now() - startedAt,
+        endpoint: "/v1/assistant/chat/stream",
+        error: err instanceof Error ? err.message : String(err),
+      }).catch(() => {});
       sseWrite(res, "error", { error: "Assistant unavailable. Please try again." });
     } finally {
       clearInterval(keepalive);
@@ -532,10 +612,22 @@ async function runHttp(): Promise<void> {
       return;
     }
 
+    const startedAt = Date.now();
     try {
       const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
       const rawText = (result as { output_text?: string }).output_text ?? JSON.stringify(result);
       const text = await postProcessResponse(rawText);
+
+      observeTurn({
+        sessionId: "legacy-" + (req.ip ?? "unknown"),
+        userMessage: message,
+        response: text,
+        toolCalls: (result as { toolCalls?: ToolCallLog[] }).toolCalls,
+        latencyMs: Date.now() - startedAt,
+        model: (result as { model?: string }).model,
+        endpoint: "/api/chat",
+      }).catch(() => {});
+
       res.json({ response: text });
     } catch (err) {
       console.error("[planda] /api/chat error:", err);
