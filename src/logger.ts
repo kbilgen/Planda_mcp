@@ -100,49 +100,96 @@ export async function logTurn(turn: TurnLog): Promise<void> {
 
 /**
  * Extract tool calls from @openai/agents Runner result.
- * Defensive — tolerates multiple item shapes (function_call, mcp_call, hosted_tool_call_item).
+ *
+ * Defensive: the Runner result exposes tool calls via multiple shapes depending
+ * on the tool type (function_call, mcp_call, hosted_tool_call_item, etc) AND
+ * multiple locations (newItems, history, state._generatedItems). We probe all
+ * of them and match any item that carries `name + arguments` as a tool call.
+ *
+ * Set DEBUG_TOOL_CALLS=1 to log raw item types to stdout for diagnosis.
  */
 export function extractToolCalls(result: unknown): ToolCallLog[] {
   const calls: ToolCallLog[] = [];
-  const r = result as { newItems?: unknown[]; history?: unknown[] } | null;
-  const items = (r?.newItems ?? r?.history ?? []) as unknown[];
+  const r = result as {
+    newItems?: unknown[];
+    history?: unknown[];
+    state?: { _generatedItems?: unknown[]; _modelResponses?: unknown[] };
+  } | null;
 
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const wrapper = item as { type?: string; rawItem?: unknown };
-    const raw = (wrapper.rawItem ?? item) as {
-      type?: string;
-      name?: string;
-      arguments?: unknown;
-      output?: unknown;
-      call_id?: string;
-    };
-    const type = String(raw.type ?? wrapper.type ?? "");
+  // Probe every known location and concat
+  const pools: unknown[][] = [
+    (r?.newItems ?? []) as unknown[],
+    (r?.history ?? []) as unknown[],
+    (r?.state?._generatedItems ?? []) as unknown[],
+  ];
+  // Model responses contain raw items too
+  for (const mr of (r?.state?._modelResponses ?? []) as Array<{ output?: unknown[] }>) {
+    if (Array.isArray(mr?.output)) pools.push(mr.output as unknown[]);
+  }
 
-    const isCall =
-      type === "function_call" ||
-      type === "mcp_call" ||
-      type.endsWith("tool_call_item") ||
-      type === "tool_call";
-    const isOutput =
-      type === "function_call_output" ||
-      type === "mcp_call_output" ||
-      type.endsWith("tool_call_output_item") ||
-      type === "tool_call_output";
+  const seenIds = new Set<string>();
+  const debug = process.env.DEBUG_TOOL_CALLS === "1";
+  const typeTrace: string[] = [];
 
-    if (isCall) {
-      const args =
-        typeof raw.arguments === "string"
-          ? raw.arguments
-          : JSON.stringify(raw.arguments ?? {});
-      calls.push({ name: raw.name ?? "unknown", arguments: args });
-    } else if (isOutput && calls.length > 0) {
-      const out =
-        typeof raw.output === "string"
-          ? raw.output
-          : JSON.stringify(raw.output ?? "");
-      calls[calls.length - 1].output = out;
+  for (const items of pools) {
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const wrapper = item as { type?: string; rawItem?: unknown };
+      const raw = (wrapper.rawItem ?? item) as {
+        type?: string;
+        name?: string;
+        arguments?: unknown;
+        output?: unknown;
+        call_id?: string;
+        id?: string;
+      };
+      const type = String(raw.type ?? wrapper.type ?? "");
+      if (debug) typeTrace.push(type);
+
+      // A call is anything with (name AND arguments) OR known call types
+      const hasCallShape = typeof raw.name === "string" && raw.arguments !== undefined;
+      const isKnownCallType =
+        type === "function_call" ||
+        type === "mcp_call" ||
+        type === "tool_call" ||
+        type.endsWith("tool_call_item") ||
+        type.includes("mcp_call");
+      const isOutput =
+        type === "function_call_output" ||
+        type === "mcp_call_output" ||
+        type.endsWith("tool_call_output_item") ||
+        type === "tool_call_output";
+
+      if (isOutput) {
+        const out =
+          typeof raw.output === "string"
+            ? raw.output
+            : JSON.stringify(raw.output ?? "");
+        // attach to the call with matching call_id if available, else last
+        const callId = raw.call_id;
+        const target = callId
+          ? calls.find((c) => c.name && seenIds.has(callId!) === false ? false : false) ?? calls[calls.length - 1]
+          : calls[calls.length - 1];
+        if (target && !target.output) target.output = out;
+        continue;
+      }
+
+      if (hasCallShape || isKnownCallType) {
+        const id = raw.call_id ?? raw.id ?? `${raw.name}-${calls.length}`;
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+        const args =
+          typeof raw.arguments === "string"
+            ? raw.arguments
+            : JSON.stringify(raw.arguments ?? {});
+        calls.push({ name: raw.name ?? type ?? "unknown", arguments: args });
+      }
     }
   }
+
+  if (debug && typeTrace.length > 0) {
+    console.log("[extractToolCalls] item types:", typeTrace.join(", "), "→", calls.length, "calls");
+  }
+
   return calls;
 }

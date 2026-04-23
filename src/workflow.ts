@@ -128,6 +128,24 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
     const result = await getOpenAIRunner().run(getOpenAIAgent(), items);
     const text = String(result.finalOutput ?? "");
     const toolCalls = extractToolCalls(result);
+
+    // Diagnostic: dump raw item shapes once per run so we can see what hosted
+    // MCP tool calls actually look like in @openai/agents SDK. Toggle via env.
+    if (process.env.DEBUG_TOOL_CALLS === "1" && toolCalls.length === 0) {
+      const probe = {
+        newItems: Array.isArray((result as { newItems?: unknown[] }).newItems)
+          ? (result as { newItems?: unknown[] }).newItems!.map((i: unknown) => {
+              const w = i as { type?: string; rawItem?: { type?: string; name?: string } };
+              return { wrapperType: w.type, rawType: w.rawItem?.type, name: w.rawItem?.name };
+            })
+          : null,
+        historyLen: Array.isArray((result as { history?: unknown[] }).history)
+          ? (result as { history?: unknown[] }).history!.length
+          : null,
+      };
+      console.log("[workflow] no tools extracted, raw probe:", JSON.stringify(probe));
+    }
+
     const model = (process.env.OPENAI_MODEL ?? "gpt-4.1-mini");
     return {
       response: text,
