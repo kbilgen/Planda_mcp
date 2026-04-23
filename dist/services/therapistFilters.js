@@ -74,13 +74,54 @@ export function filterByFuzzyName(list, query) {
     });
 }
 /**
+ * Fuzzy specialty match — returns therapists who have at least one
+ * specialty whose name (Turkish-normalized) contains the query.
+ *
+ *   filterBySpecialtyName(list, "anksiyete")  → matches "Kaygı(Anksiyete) ve Korku"
+ *   filterBySpecialtyName(list, "kaygı")      → same
+ *   filterBySpecialtyName(list, "travma")     → matches "Travmatik Deneyim"
+ *   filterBySpecialtyName(list, "depresyon")  → matches "Depresyon"
+ */
+export function filterBySpecialtyName(list, query) {
+    const norm = normTR(query);
+    if (norm.length < 3)
+        return list;
+    return list.filter((t) => (t.specialties ?? []).some((s) => {
+        const n = normTR(s?.name ?? "");
+        return n.length > 0 && n.includes(norm);
+    }));
+}
+/**
+ * Build a {normalized_name → specialty_id} map from a therapist list.
+ * Useful when the model needs to resolve a user-typed specialty phrase
+ * ("anksiyete", "kaygı") to an API-recognized specialty_id WITHOUT a
+ * separate /specialties endpoint call — the data is already in every
+ * find_therapists response under therapist.specialties[].
+ */
+export function buildSpecialtyMap(therapists) {
+    const map = new Map();
+    for (const t of therapists) {
+        for (const s of t.specialties ?? []) {
+            if (s?.id && s?.name) {
+                const key = normTR(s.name);
+                if (key && !map.has(key))
+                    map.set(key, s.id);
+            }
+        }
+    }
+    return map;
+}
+/**
  * Apply all configured filters in order. Returns the filtered list.
- * Order matters for composability: name first (narrowing), then attributes.
+ * Order matters for composability: specialty and name first (narrowing),
+ * then attribute predicates.
  */
 export function applyAiSideFilters(list, f) {
     let out = list;
     if (f.name)
         out = filterByFuzzyName(out, f.name);
+    if (f.specialty_name)
+        out = filterBySpecialtyName(out, f.specialty_name);
     if (f.online === true)
         out = out.filter(matchesOnline);
     if (f.online === false)

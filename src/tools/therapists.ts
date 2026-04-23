@@ -83,6 +83,10 @@ const FilterSchema = z.object({
     .string()
     .optional()
     .describe('Fuzzy name match (Turkish-aware, lowercased, diacritic-insensitive). Use for "X kim?" / "X bu hafta müsait mi?" lookups. Matches full_name, name+surname, and username.'),
+  specialty_name: z
+    .string()
+    .optional()
+    .describe('Turkish-aware fuzzy match against therapist.specialties[].name. PREFER THIS over calling list_specialties first — the specialty data is inline in every therapist record. Examples: "anksiyete" matches "Kaygı(Anksiyete) ve Korku", "travma" matches "Travmatik Deneyim", "depresyon" matches "Depresyon". Post-filtered server-side.'),
 });
 
 const FormatSchema = z.object({
@@ -322,22 +326,28 @@ WHEN TO CALL THIS TOOL — trigger on any of these signals:
 Always call this FIRST — do not ask clarifying questions before fetching.
 
 ALL FILTERS ARE ENFORCED SERVER-SIDE. Pass the filters directly as parameters —
-DO NOT fetch everyone and then filter in your own reply. Available filters:
+DO NOT fetch everyone and then filter in your own reply, and DO NOT call
+list_specialties first when the user names a specialty (use specialty_name).
 
-  city          — "İstanbul", "Ankara" — physical-branch match (API query)
-  specialty_id  — from list_specialties (26=Kaygı, 18=Depresyon, 35=Travma) (API query)
-  service_id    — 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi (API query)
-  online        — true: only online-capable therapists; false: only in-person; omit for both
-  gender        — "female" | "male"
-  max_fee       — TL budget cap (keeps those whose cheapest service <= max_fee)
-  name          — fuzzy name search for "<Name> kim?" / "<Name> müsait mi?" queries
+  city           — "İstanbul", "Ankara" — physical-branch match (API query)
+  specialty_id   — numeric ID if already known (API query). Usually unneeded
+                    — prefer specialty_name, which resolves fuzzily.
+  specialty_name — Turkish-aware specialty match: "anksiyete", "kaygı",
+                    "depresyon", "travma", "ilişki" etc. No separate
+                    list_specialties call needed.
+  service_id     — 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi (API query)
+  online         — true: only online-capable therapists; false: only in-person
+  gender         — "female" | "male"
+  max_fee        — TL budget cap (keeps those whose cheapest service <= max_fee)
+  name           — fuzzy name search for "<Name> kim?" / "<Name> müsait mi?" queries
 
 Examples of correct usage:
-  "Sadece online terapist öner"           → { online: true }
-  "İstanbul'da kadın terapist"            → { city: "İstanbul", gender: "female" }
-  "1500 TL altı Ankara'da"                → { city: "Ankara", max_fee: 1500 }
-  "Ekin Alankuş kim?"                     → { name: "Ekin Alankuş" }
-  "Kaygı için online EMDR terapisti"      → { online: true, specialty_id: 26 } then get_therapist per result
+  "Sadece online terapist öner"             → { online: true }
+  "İstanbul'da kadın terapist"              → { city: "İstanbul", gender: "female" }
+  "1500 TL altı Ankara'da"                  → { city: "Ankara", max_fee: 1500 }
+  "Ekin Alankuş kim?"                       → { name: "Ekin Alankuş" }
+  "Anksiyete için online terapist"          → { specialty_name: "anksiyete", online: true }
+  "EMDR yapan travma terapisti"             → { specialty_name: "travma" } then get_therapist per result to verify approaches[]
 
 ⚠️ APPROACH QUERIES (BDT/CBT, EMDR, ACT, DBT, Schema, Gestalt etc.):
   find_therapists does NOT return approaches[]. After listing candidates, call
@@ -363,7 +373,8 @@ Returns per therapist:
           params.online !== undefined ||
           params.gender !== undefined ||
           params.max_fee !== undefined ||
-          params.name !== undefined;
+          params.name !== undefined ||
+          params.specialty_name !== undefined;
         const effectivePerPage = hasPostFilter ? Math.max(params.per_page, 200) : params.per_page;
 
         const raw = await findTherapists({
@@ -384,6 +395,7 @@ Returns per therapist:
             gender: params.gender,
             max_fee: params.max_fee,
             name: params.name,
+            specialty_name: params.specialty_name,
             city: params.city,
           });
           output = { ...output, therapists: filtered, count: filtered.length };

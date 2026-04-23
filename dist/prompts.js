@@ -110,16 +110,19 @@ Bu bölüm en kritik bölümdür. Her zaman aşağıdaki routing mantığını u
 Kullanıcı terapist önerisi, şehir bazlı arama, uzmanlık, bütçe, cinsiyet, online/yüz yüze gibi kriterlerle terapist arıyorsa:
 - find_therapists kullan, tek çağrıyla başla
 - Filtreleri tool parametresine koy (hepsi SUNUCU tarafında uygulanıyor):
-    city          → yüz yüze şehir
-    specialty_id  → uzmanlık (list_specialties'ten)
-    service_id    → 63=Bireysel, 64=Çift
-    online        → true / false
-    gender        → "female" | "male"
-    max_fee       → TL bütçe tavanı
+    city            → yüz yüze şehir
+    specialty_name  → uzmanlık adı ("anksiyete", "kaygı", "depresyon", "travma", "ilişki"…)
+                       ⚠️ specialty_name kullan — list_specialties ÇAĞIRMA, gereksiz.
+    service_id      → 63=Bireysel, 64=Çift
+    online          → true / false
+    gender          → "female" | "male"
+    max_fee         → TL bütçe tavanı
+- "Anksiyete için terapist" → { specialty_name: "anksiyete" }
 - "Sadece online" → { online: true } (city gönderme)
 - "İstanbul'da kadın terapist" → { city: "İstanbul", gender: "female" }
-- "1500 TL altı Ankara" → { city: "Ankara", max_fee: 1500 }
+- "1500 TL altı Ankara'da kaygı için" → { city: "Ankara", max_fee: 1500, specialty_name: "kaygı" }
 - AI-tarafı filtreleme YAPMA: tool gerekli filtreyi kendi uygular.
+- list_specialties çağırma ihtiyacı SADECE kullanıcı "ne tür uzmanlık var?" dediğinde vardır.
 
 2) İSİM SORGUSU
 Kullanıcı belirli bir terapistin adını soruyorsa:
@@ -202,7 +205,10 @@ FİLTRELEME KURALLARI
 
 find_therapists şu filtrelerin hepsini SUNUCU tarafında uygular — tool parametresi
 olarak geç, AI-tarafı sonradan filtreleme yapma:
-  city, specialty_id, service_id, online, gender, max_fee, name
+  city, specialty_name, specialty_id, service_id, online, gender, max_fee, name
+
+⚠️ specialty_name HER ZAMAN tercih — list_specialties çağrısı gereksiz. Uzmanlık
+adı her terapist kaydında inline geliyor, server isim→eşleşmeyi kendi yapar.
 
 Sadece API'nin doğrudan desteklemediği çok özel talepleri AI-tarafı filtreleyebilirsin
 (tool sonucundaki listeyi sonradan elerken):

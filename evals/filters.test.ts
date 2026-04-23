@@ -10,6 +10,8 @@ import {
   matchesMaxFee,
   matchesGender,
   filterByFuzzyName,
+  filterBySpecialtyName,
+  buildSpecialtyMap,
   applyAiSideFilters,
 } from "../src/services/therapistFilters.js";
 import type { Therapist } from "../src/types.js";
@@ -31,6 +33,10 @@ const ayse: Therapist = {
     { id: 63, name: "Bireysel Terapi", fee: "1500.00" },
     { id: 64, name: "Çift Terapisi", fee: "2500.00" },
   ],
+  specialties: [
+    { id: 26, name: "Kaygı(Anksiyete) ve Korku" },
+    { id: 23, name: "İlişkisel Problemler" },
+  ],
 };
 
 const mehmet: Therapist = {
@@ -44,6 +50,10 @@ const mehmet: Therapist = {
     { id: 20, type: "physical", name: "Çankaya", city: { id: 6, name: "Ankara" } },
   ],
   services: [{ id: 63, name: "Bireysel Terapi", custom_fee: "3000.00" }],
+  specialties: [
+    { id: 18, name: "Depresyon" },
+    { id: 22, name: "İletişim problemleri" },
+  ],
 };
 
 const ekin: Therapist = {
@@ -57,6 +67,10 @@ const ekin: Therapist = {
     { id: 30, type: "online", name: "Online" },
   ],
   services: [{ id: 63, name: "Bireysel Terapi", fee: "800.00" }],
+  specialties: [
+    { id: 35, name: "Travmatik Deneyim" },
+    { id: 26, name: "Kaygı(Anksiyete) ve Korku" },
+  ],
 };
 
 const noBranches: Therapist = {
@@ -208,4 +222,79 @@ test("applyAiSideFilters: name narrows first, then online", () => {
 test("applyAiSideFilters: empty filters pass-through", () => {
   const result = applyAiSideFilters(LIST, {});
   assert.equal(result.length, LIST.length);
+});
+
+// ─── filterBySpecialtyName (Turkish-aware, derived from therapist.specialties[]) ─
+
+test("filterBySpecialtyName: 'anksiyete' matches 'Kaygı(Anksiyete) ve Korku'", () => {
+  const result = filterBySpecialtyName(LIST, "anksiyete");
+  const ids = result.map((t) => t.id).sort();
+  assert.deepEqual(ids, [1, 3]); // ayse + ekin
+});
+
+test("filterBySpecialtyName: 'kaygı' also matches via Turkish normalisation", () => {
+  const result = filterBySpecialtyName(LIST, "kaygı");
+  const ids = result.map((t) => t.id).sort();
+  assert.deepEqual(ids, [1, 3]);
+});
+
+test("filterBySpecialtyName: 'kaygi' (no diacritic) still matches", () => {
+  const result = filterBySpecialtyName(LIST, "kaygi");
+  assert.equal(result.length, 2);
+});
+
+test("filterBySpecialtyName: 'travma' matches 'Travmatik Deneyim'", () => {
+  const result = filterBySpecialtyName(LIST, "travma");
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 3);
+});
+
+test("filterBySpecialtyName: 'depresyon' matches only Mehmet", () => {
+  const result = filterBySpecialtyName(LIST, "depresyon");
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 2);
+});
+
+test("filterBySpecialtyName: unknown specialty returns empty", () => {
+  const result = filterBySpecialtyName(LIST, "hipnoterapi");
+  assert.equal(result.length, 0);
+});
+
+test("filterBySpecialtyName: too-short query returns list unchanged", () => {
+  const result = filterBySpecialtyName(LIST, "ka"); // < 3 chars
+  assert.equal(result.length, LIST.length);
+});
+
+test("buildSpecialtyMap: extracts all unique id+name pairs", () => {
+  const map = buildSpecialtyMap(LIST);
+  // Kaygı(26), İlişkisel(23), Depresyon(18), İletişim(22), Travmatik(35) → 5 unique
+  assert.equal(map.size, 5);
+  // Keys are normalized
+  assert.equal(map.get("kaygi anksiyete ve korku"), 26);
+  assert.equal(map.get("depresyon"), 18);
+  assert.equal(map.get("travmatik deneyim"), 35);
+});
+
+test("applyAiSideFilters: specialty_name + online composes correctly", () => {
+  // Target: someone with anksiyete specialty AND online-capable
+  // Both Ayşe (1) and Ekin (3) have anksiyete, but only they differ on branches
+  // Ayşe has both online+physical, Ekin only online — both pass
+  const result = applyAiSideFilters(LIST, {
+    specialty_name: "anksiyete",
+    online: true,
+  });
+  const ids = result.map((t) => t.id).sort();
+  assert.deepEqual(ids, [1, 3]);
+});
+
+test("applyAiSideFilters: specialty_name + gender + city narrows correctly", () => {
+  // İstanbul + female + kaygı → only Ayşe (1)
+  const result = applyAiSideFilters(LIST, {
+    specialty_name: "kaygı",
+    gender: "female",
+    online: false,
+    city: "İstanbul",
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 1);
 });
