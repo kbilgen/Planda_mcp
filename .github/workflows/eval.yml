@@ -1,0 +1,85 @@
+name: Eval
+
+# Live-API evaluation suite — hits OpenAI + Planda MCP, ~2-5 min, ~$0.10-0.30 per run.
+# Runs only when relevant files change, on manual dispatch, or weekly baseline.
+#
+# Requires secrets:
+#   OPENAI_API_KEY  — GitHub → Settings → Secrets → Actions
+
+on:
+  pull_request:
+    paths:
+      - 'src/prompts.ts'
+      - 'src/tools/**'
+      - 'src/guards/**'
+      - 'src/workflow.ts'
+      - 'src/services/**'
+      - 'evals/**'
+      - '.github/workflows/eval.yml'
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'Run only cases whose id/category contains this string'
+        required: false
+        default: ''
+      use_judge:
+        description: 'Run LLM-as-judge scoring'
+        type: boolean
+        default: true
+  schedule:
+    - cron: '0 6 * * 1'  # Monday 06:00 UTC — weekly baseline
+
+jobs:
+  eval:
+    name: Run eval suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests (fast gate before paying for LLM calls)
+        run: npm run test:unit
+
+      - name: Run eval suite (assertions + judge)
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use_judge == 'true' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EVAL_FILTER: ${{ github.event.inputs.filter }}
+        run: |
+          if [ -n "$EVAL_FILTER" ]; then
+            npm run eval:judge -- --filter "$EVAL_FILTER"
+          else
+            npm run eval:judge
+          fi
+
+      - name: Run eval suite (assertions only)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.use_judge == 'false' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EVAL_FILTER: ${{ github.event.inputs.filter }}
+        run: |
+          if [ -n "$EVAL_FILTER" ]; then
+            npm run eval -- --filter "$EVAL_FILTER"
+          else
+            npm run eval
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.run_id }}
+          path: evals/reports/
+          retention-days: 30
