@@ -1,14 +1,20 @@
 /**
- * Sentry integration — error tracking, performance spans, structured events.
+ * Sentry integration — error tracking + structured events.
  *
  * Initialized at startup if SENTRY_DSN is set. All helpers are no-ops when
  * Sentry is not configured, so code can call them unconditionally.
  *
+ * IMPORTANT: Auto-instrumentation (OpenTelemetry HTTP/Express patching) is
+ * DISABLED. The @sentry/node v8+ auto-instrumentation requires Sentry.init()
+ * to run BEFORE any other module imports — our setup imports express/http
+ * first, which causes request hangs in production. We use manual capture
+ * (captureException, captureMessage, withScope) which works regardless of
+ * import order. Performance spans are no-ops.
+ *
  * Env:
  *   SENTRY_DSN           — DSN from Sentry project settings
  *   SENTRY_ENVIRONMENT   — "production" | "staging" | ... (default: NODE_ENV)
- *   SENTRY_RELEASE       — release tag (default: package.json version)
- *   SENTRY_TRACES_RATE   — 0..1 performance sample rate (default: 0.2)
+ *   SENTRY_RELEASE       — release tag
  */
 
 import * as Sentry from "@sentry/node";
@@ -28,12 +34,24 @@ export function initSentry(): void {
     dsn,
     environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? "production",
     release: process.env.SENTRY_RELEASE,
-    tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_RATE ?? "0.2"),
     sendDefaultPii: false,
+    // Disable performance tracing — no auto-spans, no module patching
+    tracesSampleRate: 0,
+    // Skip OpenTelemetry auto-setup — prevents HTTP/Express hang on late init
+    skipOpenTelemetrySetup: true,
+    // Don't register ESM loader hooks (we're already imported)
+    registerEsmLoaderHooks: false,
+    // Replace default integrations with a minimal set that doesn't patch modules
+    defaultIntegrations: false,
+    integrations: [
+      Sentry.consoleIntegration(),
+      Sentry.linkedErrorsIntegration(),
+      Sentry.requestDataIntegration(),
+    ],
   });
 
   initialized = true;
-  console.log("[sentry] Initialized");
+  console.log("[sentry] Initialized (manual capture mode)");
 }
 
 export function isSentryEnabled(): boolean {
@@ -104,14 +122,17 @@ export function reportTurnToSentry(turn: TurnLog): void {
   });
 }
 
-/** Wraps a chat turn in a performance span. */
+/**
+ * Wraps a chat turn — currently a no-op pass-through.
+ * Performance spans require OpenTelemetry which we disable; kept for API
+ * compatibility in case we re-enable tracing via --import preload later.
+ */
 export async function withChatSpan<T>(
-  name: string,
-  attrs: Record<string, string | number | boolean>,
+  _name: string,
+  _attrs: Record<string, string | number | boolean>,
   fn: () => Promise<T>
 ): Promise<T> {
-  if (!initialized) return fn();
-  return Sentry.startSpan({ name, op: "chat", attributes: attrs }, fn);
+  return fn();
 }
 
 export { Sentry };
