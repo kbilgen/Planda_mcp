@@ -90,6 +90,19 @@ export function classifyIntent(message: string): IntentResult {
   const searchMatches = hasAny(n, SEARCH_KEYS);
   const detailMatches = hasAny(n, DETAIL_KEYS);
 
+  // "Specific enough to search": must contain at least one of
+  // specialty / city / approach / service qualifier. Otherwise it's a vague
+  // request like "terapi arıyorum" / "kendim için psikolog arıyorum" where
+  // the correct behavior is to ask a clarifying question, not call tools.
+  const SPECIFICITY_KEYS = [
+    "anksiyete", "kaygi", "depresyon", "panik", "travma", "stres", "burnout",
+    "iliski", "evlilik", "cift", "ergen", "cocuk", "aile",
+    "istanbul", "ankara", "izmir", "bursa", "antalya",
+    "online", "yuz yuze",
+  ];
+  const specificity = hasAny(n, [...SPECIFICITY_KEYS, ...DETAIL_KEYS]);
+  const hasEnoughInfo = specificity.length > 0;
+
   if (searchMatches.length && detailMatches.length) {
     return {
       intent: "search_therapist",
@@ -109,7 +122,8 @@ export function classifyIntent(message: string): IntentResult {
   if (searchMatches.length) {
     return {
       intent: "search_therapist",
-      expectedTools: ["find_therapists"],
+      // Vague searches expect a clarifying question, not a tool call
+      expectedTools: hasEnoughInfo ? ["find_therapists"] : [],
       matched: searchMatches,
     };
   }
@@ -132,18 +146,41 @@ export function classifyIntent(message: string): IntentResult {
   return { intent: "unknown", expectedTools: [], matched: [] };
 }
 
-/** Returns violations when expected tools were not called. */
+/**
+ * Returns violations when expected tools were not called.
+ *
+ * Ignores the mismatch when the assistant responded with a clarifying question
+ * (ends with "?" or contains a common Turkish clarifier) — asking for more info
+ * before searching is a legitimate flow per the system prompt.
+ */
 export function detectIntentToolMismatch(
   intent: IntentResult,
-  actualToolCalls: string[]
+  actualToolCalls: string[],
+  response?: string
 ): string[] {
   if (intent.expectedTools.length === 0) return [];
   const called = new Set(actualToolCalls);
   const missing = intent.expectedTools.filter((t) => !called.has(t));
-  // Only flag if NONE of the expected tools were called
-  // (check_availability has two possible tools, either satisfies)
-  if (missing.length === intent.expectedTools.length) {
-    return [`expected one of [${intent.expectedTools.join(", ")}] but got [${actualToolCalls.join(", ") || "none"}]`];
+  if (missing.length < intent.expectedTools.length) return [];
+
+  // Clarification heuristic — response asks a question before searching
+  if (response) {
+    const trimmed = response.trim();
+    const lastChar = trimmed.slice(-1);
+    const lower = trimmed.toLowerCase();
+    const clarifierPhrases = [
+      "paylaşabilir misin", "paylasabilir misin",
+      "söyleyebilir misin", "soyleyebilir misin",
+      "hangi konu", "hangi şehir", "hangi sehir",
+      "kimin için", "kimin icin",
+      "ne tür", "ne tur",
+      "kaç yaş", "kac yas",
+      "online mi", "yüz yüze mi", "yuz yuze mi",
+    ];
+    if (lastChar === "?" || clarifierPhrases.some((p) => lower.includes(p))) {
+      return [];
+    }
   }
-  return [];
+
+  return [`expected one of [${intent.expectedTools.join(", ")}] but got [${actualToolCalls.join(", ") || "none"}]`];
 }

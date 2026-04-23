@@ -11,6 +11,12 @@ export interface IntentResult {
     matched: string[];
 }
 export declare function classifyIntent(message: string): IntentResult;
-/** Returns violations when expected tools were not called. */
-export declare function detectIntentToolMismatch(intent: IntentResult, actualToolCalls: string[]): string[];
+/**
+ * Returns violations when expected tools were not called.
+ *
+ * Ignores the mismatch when the assistant responded with a clarifying question
+ * (ends with "?" or contains a common Turkish clarifier) — asking for more info
+ * before searching is a legitimate flow per the system prompt.
+ */
+export declare function detectIntentToolMismatch(intent: IntentResult, actualToolCalls: string[], response?: string): string[];
 //# sourceMappingURL=intentClassifier.d.ts.map

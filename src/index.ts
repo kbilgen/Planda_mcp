@@ -279,8 +279,13 @@ async function observeTurn(opts: {
   const intent = classifyIntent(opts.userMessage);
   const violations: GuardViolation[] = [];
 
-  // Intent → tool-call mismatch (e.g. search intent without find_therapists)
-  const mismatch = detectIntentToolMismatch(intent, toolCalls.map((c) => c.name));
+  // Intent → tool-call mismatch (e.g. search intent without find_therapists).
+  // Response is passed so clarifying questions don't falsely trigger a mismatch.
+  const mismatch = detectIntentToolMismatch(
+    intent,
+    toolCalls.map((c) => c.name),
+    opts.response
+  );
   for (const m of mismatch) {
     violations.push({ kind: "intent_mismatch", detail: m });
   }

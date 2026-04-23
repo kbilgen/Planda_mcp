@@ -131,6 +131,11 @@ export function extractToolCalls(result: unknown): ToolCallLog[] {
   const debug = process.env.DEBUG_TOOL_CALLS === "1";
   const typeTrace: string[] = [];
 
+  // mcp_list_tools is a transport/bootstrap call (MCP server tool discovery),
+  // not a semantic tool call. Filter it out so downstream checks (intent
+  // mismatch, tool_count tag) only see user-meaningful calls.
+  const BOOTSTRAP_NAMES = new Set(["mcp_list_tools"]);
+
   for (const items of pools) {
     for (const item of items) {
       if (!item || typeof item !== "object") continue;
@@ -151,12 +156,12 @@ export function extractToolCalls(result: unknown): ToolCallLog[] {
       if (debug) typeTrace.push(type);
 
       // Actual tool name: for hosted_tool_call with name="mcp_call", the real
-      // tool name is in tool_name / providerData.name / arguments.name.
+      // tool name is in providerData.name (confirmed via live probe).
       const providerName = raw.providerData?.name;
       const wrappedName = raw.name;
       let toolName = wrappedName;
       if (wrappedName === "mcp_call" || wrappedName === "mcp_list_tools") {
-        toolName = raw.tool_name ?? providerName ?? wrappedName;
+        toolName = providerName ?? raw.tool_name ?? wrappedName;
       }
 
       const hasCallShape = typeof raw.name === "string";
@@ -188,10 +193,13 @@ export function extractToolCalls(result: unknown): ToolCallLog[] {
         const id = raw.call_id ?? raw.id ?? `${toolName}-${calls.length}`;
         if (seenIds.has(id)) continue;
         seenIds.add(id);
+        const resolvedName = toolName ?? type ?? "unknown";
+        // Skip bootstrap calls — not meaningful for intent-mismatch analysis
+        if (BOOTSTRAP_NAMES.has(resolvedName)) continue;
         const rawArgs = raw.arguments ?? raw.providerData?.arguments;
         const args =
           typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs ?? {});
-        calls.push({ name: toolName ?? type ?? "unknown", arguments: args });
+        calls.push({ name: resolvedName, arguments: args });
       }
     }
   }
