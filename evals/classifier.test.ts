@@ -198,3 +198,39 @@ test("availability: 'Bu pazartesi 14:00 müsait mi?'", () => {
     "check_availability"
   );
 });
+
+// ─── Name-lookup pattern (lookup-01-name regression) ─────────────────────────
+// Capitalized 2+ word names should classify as search_therapist when no
+// other intent matches. Availability still wins when its keywords are present.
+
+test("name-lookup: 'Ekin Alankuş kim?' → search_therapist", () => {
+  const r = classifyIntent("Ekin Alankuş kim?");
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("name-lookup: 'Ayşe Nur Çelik hakkında bilgi verir misin?' → search_therapist", () => {
+  // "hakkında" is in DETAIL_KEYS but no SEARCH_KEYS — currently falls through
+  // to detail intent (get_therapist), which is also acceptable. Either intent
+  // results in a tool call so we accept both.
+  const r = classifyIntent("Ayşe Nur Çelik hakkında bilgi verir misin?");
+  assert.ok(
+    r.intent === "search_therapist" || r.intent === "therapist_detail",
+    `expected search_therapist or therapist_detail, got ${r.intent}`
+  );
+  assert.ok(r.expectedTools.length > 0, "name lookup must expect a tool call");
+});
+
+test("name-lookup respects availability priority: 'Ekin Alankuş bu hafta müsait mi?'", () => {
+  // "müsait" should still pull the message to availability even though the
+  // capital-name pattern matches.
+  const r = classifyIntent("Ekin Alankuş bu hafta müsait mi?");
+  assert.equal(r.intent, "check_availability");
+});
+
+test("name-lookup: single capitalized word does NOT trigger (avoid 'İstanbul' false positive)", () => {
+  // Just "İstanbul'da terapist" shouldn't fire name-lookup; it's a search
+  // (caught earlier by SEARCH_KEYS via "terapist").
+  const r = classifyIntent("İstanbul'da terapist");
+  assert.equal(r.intent, "search_therapist");
+});

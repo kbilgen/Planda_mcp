@@ -190,6 +190,21 @@ export function classifyIntent(message: string): IntentResult {
   const oos = hasAny(n, oosKeys);
   if (oos.length) return { intent: "out_of_scope", expectedTools: [], matched: oos };
 
+  // Name-lookup pattern — two or more consecutive Turkish-capitalized words
+  // ("Ekin Alankuş kim?", "Ayşe Nur Çelik hakkında bilgi"). Runs LAST so that
+  // search/availability intents take priority when their keywords are present
+  // ("Ayşe Nur Çelik bu hafta müsait mi" → check_availability via "müsait").
+  // Operates on the ORIGINAL message (case preserved).
+  const NAME_LOOKUP_RE = /[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+)+/;
+  const nameMatch = message.match(NAME_LOOKUP_RE);
+  if (nameMatch) {
+    return {
+      intent: "search_therapist",
+      expectedTools: ["find_therapists"],
+      matched: [nameMatch[0]],
+    };
+  }
+
   return { intent: "unknown", expectedTools: [], matched: [] };
 }
 
