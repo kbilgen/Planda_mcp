@@ -39,7 +39,14 @@ export async function runCase(tc: TestCase): Promise<CaseResult> {
     const result = await runChat({ message: tc.input, history });
     const latencyMs = Date.now() - startedAt;
     const response = result.response ?? "";
-    const toolCalls = (result.toolCalls ?? []).map((c) => c.name);
+
+    // list_specialties is a discovery/bootstrap call (look up specialty IDs) —
+    // same reasoning as mcp_list_tools. Not a semantic user-action, so we
+    // filter it from the tool-call assertions. Kept in the report for
+    // visibility (useful for detecting over-use) but doesn't affect pass/fail.
+    const BOOTSTRAP_TOOLS = new Set(["mcp_list_tools", "list_specialties"]);
+    const rawToolCalls = (result.toolCalls ?? []).map((c) => c.name);
+    const toolCalls = rawToolCalls.filter((n) => !BOOTSTRAP_TOOLS.has(n));
     const intent = classifyIntent(tc.input);
 
     const assertions: AssertionResult[] = [];
