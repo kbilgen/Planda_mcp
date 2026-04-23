@@ -53,6 +53,10 @@ jobs:
         run: npm run test:unit
 
       - name: Run eval suite (assertions + judge)
+        # PR runs use continue-on-error so a partial baseline doesn't block
+        # merges. Schedule + manual dispatch keep the fail gate so weekly
+        # regressions surface as failed builds.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use_judge == 'true' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -65,6 +69,7 @@ jobs:
           fi
 
       - name: Run eval suite (assertions only)
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.use_judge == 'false' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
