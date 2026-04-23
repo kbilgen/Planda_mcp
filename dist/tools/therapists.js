@@ -13,6 +13,7 @@ import { handleApiError } from "../services/apiClient.js";
 import { findTherapists, getTherapist, listSpecialties as apiListSpecialties, getTherapistHours as apiGetTherapistHours, getTherapistAvailableDays as apiGetTherapistAvailableDays, getActiveCities as apiGetActiveCities, } from "../services/therapistApi.js";
 import { CHARACTER_LIMIT } from "../constants.js";
 import { ResponseFormat, } from "../types.js";
+import { applyAiSideFilters } from "../services/therapistFilters.js";
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 const PaginationSchema = z.object({
     page: z
@@ -29,25 +30,42 @@ const PaginationSchema = z.object({
         .default(50)
         .describe("Results per page (1–10000, default 50). Use 100 to fetch all therapists in one call (~59 total)."),
 });
-// Confirmed server-side filter params:
-// - city: works
-// - specialty_id: works (e.g. 26=Kaygı, 18=Depresyon)
-// - service_id: works (63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi)
+// All filters below are enforced server-side inside the tool handler —
+// either via the Planda API query parameters (city/specialty_id/service_id)
+// or via JS post-filter (online/gender/max_fee/name). The AI should ALWAYS
+// pass filters here instead of fetching-then-filtering in its own response.
 const FilterSchema = z.object({
     city: z
         .string()
         .optional()
-        .describe('Filter by city name, e.g. "İstanbul", "Ankara".'),
+        .describe('City name for physical-branch match, e.g. "İstanbul", "Ankara". Applied via API query.'),
     specialty_id: z
         .number()
         .int()
         .optional()
-        .describe("Filter by specialty ID from list_specialties (e.g. 26=Kaygı, 18=Depresyon, 35=Travma)."),
+        .describe("Specialty ID from list_specialties (e.g. 26=Kaygı, 18=Depresyon, 35=Travma). Applied via API query."),
     service_id: z
         .number()
         .int()
         .optional()
-        .describe("Filter by service ID: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi."),
+        .describe("Service ID: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi. Applied via API query."),
+    online: z
+        .boolean()
+        .optional()
+        .describe('true → only therapists with an online branch. false → only in-person. Omit for both. Post-filtered server-side (branches[].type).'),
+    gender: z
+        .enum(["female", "male"])
+        .optional()
+        .describe('Filter by therapist gender. Post-filtered server-side (gender field).'),
+    max_fee: z
+        .number()
+        .positive()
+        .optional()
+        .describe("Max session fee in TL. Keeps therapists whose cheapest service is <= max_fee. Post-filtered server-side."),
+    name: z
+        .string()
+        .optional()
+        .describe('Fuzzy name match (Turkish-aware, lowercased, diacritic-insensitive). Use for "X kim?" / "X bu hafta müsait mi?" lookups. Matches full_name, name+surname, and username.'),
 });
 const FormatSchema = z.object({
     response_format: z
@@ -241,27 +259,36 @@ WHEN TO CALL THIS TOOL — trigger on any of these signals:
   • User explicitly asks: "terapist arıyorum", "psikolog önerir misin", "terapi almak istiyorum"
   • User describes a struggle: anxiety / anksiyete, depression / depresyon, trauma / travma,
     grief, burnout, panic attacks, relationship issues, OCD, PTSD, eating disorders, stress, loneliness
+  • User names a specific therapist ("Ekin Alankuş kim?", "Ayşe Nur Çelik bu hafta müsait mi?")
   • User asks "where do I start?" about mental health support
   • User mentions a child, teen, or partner who needs therapy
   • User asks about session costs, online vs in-person therapy, or therapist availability in Turkey
-  • English equivalents: "I need a therapist", "looking for a psychologist", "struggling with [anything emotional]"
+  • English equivalents: "I need a therapist", "looking for a psychologist", "struggling with anything emotional"
 
-Always call this FIRST — do not ask clarifying questions before fetching. Fetch first, filter on AI side.
+Always call this FIRST — do not ask clarifying questions before fetching.
 
-Working server-side filters (use these to reduce result set):
-  - city: "İstanbul", "Ankara" etc. (in-person only — omit for online)
-  - specialty_id: from list_specialties (e.g. 26=Kaygı, 18=Depresyon, 35=Travma)
-  - service_id: 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi
+ALL FILTERS ARE ENFORCED SERVER-SIDE. Pass the filters directly as parameters —
+DO NOT fetch everyone and then filter in your own reply. Available filters:
 
-Filter AI-side after fetching (these params are ignored by the API):
-  - online/in-person → branches[].type === "online" | "physical"
-  - gender          → gender field: "female" | "male"
-  - price           → services[].custom_fee ?? services[].fee (string, parse to float)
-  - specialty       → specialties[].name (Turkish labels)
+  city          — "İstanbul", "Ankara" — physical-branch match (API query)
+  specialty_id  — from list_specialties (26=Kaygı, 18=Depresyon, 35=Travma) (API query)
+  service_id    — 63=Bireysel Terapi, 64=Çift ve Evlilik Terapisi (API query)
+  online        — true: only online-capable therapists; false: only in-person; omit for both
+  gender        — "female" | "male"
+  max_fee       — TL budget cap (keeps those whose cheapest service <= max_fee)
+  name          — fuzzy name search for "<Name> kim?" / "<Name> müsait mi?" queries
+
+Examples of correct usage:
+  "Sadece online terapist öner"           → { online: true }
+  "İstanbul'da kadın terapist"            → { city: "İstanbul", gender: "female" }
+  "1500 TL altı Ankara'da"                → { city: "Ankara", max_fee: 1500 }
+  "Ekin Alankuş kim?"                     → { name: "Ekin Alankuş" }
+  "Kaygı için online EMDR terapisti"      → { online: true, specialty_id: 26 } then get_therapist per result
 
 ⚠️ APPROACH QUERIES (BDT/CBT, EMDR, ACT, DBT, Schema, Gestalt etc.):
-  After listing candidates, call get_therapist for each to verify approaches[].
-  Only recommend therapists whose approaches[].name contains the requested method.
+  find_therapists does NOT return approaches[]. After listing candidates, call
+  get_therapist for each to verify approaches[]. Only recommend therapists
+  whose approaches[].name contains the requested method.
 
 Returns per therapist:
   full_name, username, gender, specialties[], branches[], services[], rating, bio`,
@@ -274,14 +301,34 @@ Returns per therapist:
         },
     }, async (params) => {
         try {
+            // When post-filters (online/gender/max_fee/name) are requested, we
+            // must fetch a wider slice from the API and narrow in JS afterwards.
+            // Bump per_page to capture the full roster (~59 therapists).
+            const hasPostFilter = params.online !== undefined ||
+                params.gender !== undefined ||
+                params.max_fee !== undefined ||
+                params.name !== undefined;
+            const effectivePerPage = hasPostFilter ? Math.max(params.per_page, 200) : params.per_page;
             const raw = await findTherapists({
                 page: params.page,
-                per_page: params.per_page,
+                per_page: effectivePerPage,
                 city: params.city,
                 specialty_id: params.specialty_id,
                 service_id: params.service_id,
             });
-            let output = normaliseListResponse(raw, params.page, params.per_page);
+            let output = normaliseListResponse(raw, params.page, effectivePerPage);
+            // Server-side filters — authoritative, executed before any truncation
+            // or stripping so the model never sees results that violate its ask.
+            if (hasPostFilter) {
+                const filtered = applyAiSideFilters(output.therapists, {
+                    online: params.online,
+                    gender: params.gender,
+                    max_fee: params.max_fee,
+                    name: params.name,
+                    city: params.city,
+                });
+                output = { ...output, therapists: filtered, count: filtered.length };
+            }
             // Strip large bio fields before character limit check — prevents truncation of list
             output = { ...output, therapists: stripHeavyFields(output.therapists) };
             output = applyCharacterLimit(output);

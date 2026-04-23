@@ -7,9 +7,14 @@ export interface ChatInput {
     message: string;
     history: ChatMessage[];
     /**
-     * When true, force the model to make at least one tool call before
-     * responding. Set by callers when the intent classifier detects a
-     * specific search where the model shouldn't respond from memory.
+     * When true, the orchestrator will retry once (with a corrective hint)
+     * if the model produced a response without calling any tools. Set by
+     * callers when the intent classifier detects a specific search where
+     * a tool call is required for a grounded answer.
+     *
+     * Note: this does NOT force toolChoice="required" on the model —
+     * that option causes tool-loop hangs because it applies to every
+     * step, not just the first. We instead verify post-hoc and retry.
      */
     forceToolCall?: boolean;
 }
