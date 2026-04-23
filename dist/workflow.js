@@ -5,6 +5,7 @@ import { OpenAI } from "openai";
 import { runGuardrails } from "@openai/guardrails";
 import { hostedMcpTool, Agent, Runner, withTrace } from "@openai/agents";
 import { SYSTEM_PROMPT } from "./prompts.js";
+import { extractToolCalls } from "./logger.js";
 // ─── Guardrails (optional — skipped if OPENAI_API_KEY missing) ───────────────
 let _guardrailsClient = null;
 function getGuardrailsClient() {
@@ -88,9 +89,29 @@ async function runOpenAIChat(input) {
         ];
         const result = await getOpenAIRunner().run(getOpenAIAgent(), items);
         const text = String(result.finalOutput ?? "");
+        const toolCalls = extractToolCalls(result);
+        // Diagnostic: dump raw item shapes once per run so we can see what hosted
+        // MCP tool calls actually look like in @openai/agents SDK. Toggle via env.
+        if (process.env.DEBUG_TOOL_CALLS === "1" && toolCalls.length === 0) {
+            const probe = {
+                newItems: Array.isArray(result.newItems)
+                    ? result.newItems.map((i) => {
+                        const w = i;
+                        return { wrapperType: w.type, rawType: w.rawItem?.type, name: w.rawItem?.name };
+                    })
+                    : null,
+                historyLen: Array.isArray(result.history)
+                    ? result.history.length
+                    : null,
+            };
+            console.log("[workflow] no tools extracted, raw probe:", JSON.stringify(probe));
+        }
+        const model = (process.env.OPENAI_MODEL ?? "gpt-4.1-mini");
         return {
             response: text,
             updatedHistory: [...input.history, { role: "user", content: input.message }, { role: "assistant", content: text }],
+            toolCalls,
+            model,
         };
     });
 }
@@ -123,6 +144,10 @@ export const runWorkflow = async (workflow) => {
     const last = all[all.length - 1];
     const history = last?.role === "user" && last?.content === workflow.input_as_text ? all.slice(0, -1) : all;
     const result = await runChat({ message: workflow.input_as_text, history });
-    return { output_text: result.response };
+    return {
+        output_text: result.response,
+        toolCalls: result.toolCalls,
+        model: result.model,
+    };
 };
 //# sourceMappingURL=workflow.js.map

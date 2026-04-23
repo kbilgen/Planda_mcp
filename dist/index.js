@@ -27,6 +27,12 @@ import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat, runChatStream } from "./workflow.js";
 import { getHistory, saveHistory } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
+import { logTurn } from "./logger.js";
+import { classifyIntent, detectIntentToolMismatch } from "./guards/intentClassifier.js";
+import { verifyResponse } from "./guards/hallucinationGuard.js";
+import { initSentry, Sentry } from "./sentry.js";
+// Sentry must initialize before any other import that might throw
+initSentry();
 // ─── Therapist list cache ─────────────────────────────────────────────────────
 const THERAPIST_CACHE_TTL_MS = 5 * 60 * 1000;
 let therapistCache = null;
@@ -215,6 +221,43 @@ async function postProcessResponse(text) {
     });
     return result;
 }
+// ─── Observability pipeline ──────────────────────────────────────────────────
+//
+// Called after every chat turn (buffered + stream + legacy).
+// Collects intent, guard violations, tool calls; writes JSONL + stdout.
+async function observeTurn(opts) {
+    const toolCalls = opts.toolCalls ?? [];
+    const intent = classifyIntent(opts.userMessage);
+    const violations = [];
+    // Intent → tool-call mismatch (e.g. search intent without find_therapists)
+    const mismatch = detectIntentToolMismatch(intent, toolCalls.map((c) => c.name));
+    for (const m of mismatch) {
+        violations.push({ kind: "intent_mismatch", detail: m });
+    }
+    // Hallucination check — names/usernames must exist in roster
+    try {
+        const halluc = await verifyResponse(opts.response);
+        for (const v of halluc) {
+            violations.push({ kind: v.kind, detail: v.value });
+        }
+    }
+    catch (err) {
+        console.error("[observe] verifyResponse error:", err);
+    }
+    await logTurn({
+        ts: new Date().toISOString(),
+        sessionId: opts.sessionId,
+        userMessage: opts.userMessage,
+        response: opts.response,
+        toolCalls,
+        latencyMs: opts.latencyMs,
+        model: opts.model,
+        endpoint: opts.endpoint,
+        intent: intent.intent,
+        violations: violations.length ? violations : undefined,
+        error: opts.error,
+    });
+}
 // ─── API key guard ────────────────────────────────────────────────────────────
 // API_SECRET_KEY env var set → enforce on all chat endpoints.
 // Not set → open (development / backward-compat).
@@ -337,11 +380,17 @@ async function runHttp() {
         }
         const sessionId = extractSessionId(body, req);
         const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
+        const startedAt = Date.now();
         try {
-            const { response: rawResponse, updatedHistory } = await runChat({ message, history });
+            const { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history });
             const response = await postProcessResponse(rawResponse);
             // Store'u async güncelle — response'u bekletme
             saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            observeTurn({
+                sessionId, userMessage: message, response,
+                toolCalls, latencyMs: Date.now() - startedAt, model,
+                endpoint: "/v1/assistant/chat",
+            }).catch(() => { });
             res.json({
                 response,
                 message: response, // alias
@@ -351,6 +400,12 @@ async function runHttp() {
         }
         catch (err) {
             console.error("[planda] /v1/assistant/chat error:", err);
+            observeTurn({
+                sessionId, userMessage: message, response: "",
+                latencyMs: Date.now() - startedAt,
+                endpoint: "/v1/assistant/chat",
+                error: err instanceof Error ? err.message : String(err),
+            }).catch(() => { });
             res.status(502).json({ error: "Assistant unavailable. Please try again." });
         }
     });
@@ -394,10 +449,11 @@ async function runHttp() {
         catch {
             clearInterval(keepalive);
         } }, 15000);
+        const startedAt = Date.now();
         try {
             const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
             let fullText = "";
-            const { updatedHistory } = await runChatStream({ message, history }, {
+            const { updatedHistory, toolCalls, model } = await runChatStream({ message, history }, {
                 onStatus: (msg) => sseWrite(res, "status", { message: msg }),
                 onDelta: (delta) => {
                     fullText += delta;
@@ -411,6 +467,11 @@ async function runHttp() {
                 sseWrite(res, "corrected", { response, session_id: sessionId });
             }
             saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            observeTurn({
+                sessionId, userMessage: message, response,
+                toolCalls, latencyMs: Date.now() - startedAt, model,
+                endpoint: "/v1/assistant/chat/stream",
+            }).catch(() => { });
             sseWrite(res, "done", {
                 response,
                 message: response,
@@ -420,6 +481,12 @@ async function runHttp() {
         }
         catch (err) {
             console.error("[planda] /v1/assistant/chat/stream error:", err);
+            observeTurn({
+                sessionId, userMessage: message, response: "",
+                latencyMs: Date.now() - startedAt,
+                endpoint: "/v1/assistant/chat/stream",
+                error: err instanceof Error ? err.message : String(err),
+            }).catch(() => { });
             sseWrite(res, "error", { error: "Assistant unavailable. Please try again." });
         }
         finally {
@@ -438,10 +505,20 @@ async function runHttp() {
             res.status(400).json({ error: "message is required" });
             return;
         }
+        const startedAt = Date.now();
         try {
             const result = await runWorkflow({ input_as_text: message, history: history ?? [] });
             const rawText = result.output_text ?? JSON.stringify(result);
             const text = await postProcessResponse(rawText);
+            observeTurn({
+                sessionId: "legacy-" + (req.ip ?? "unknown"),
+                userMessage: message,
+                response: text,
+                toolCalls: result.toolCalls,
+                latencyMs: Date.now() - startedAt,
+                model: result.model,
+                endpoint: "/api/chat",
+            }).catch(() => { });
             res.json({ response: text });
         }
         catch (err) {
@@ -550,10 +627,18 @@ async function runHttp() {
 // ─── Process error handlers ───────────────────────────────────────────────────
 process.on("uncaughtException", (err) => {
     console.error("[planda] Uncaught exception:", err);
+    try {
+        Sentry.captureException(err);
+    }
+    catch { }
     process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
     console.error("[planda] Unhandled rejection:", reason);
+    try {
+        Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)));
+    }
+    catch { }
     process.exit(1);
 });
 // ─── Entry point ──────────────────────────────────────────────────────────────

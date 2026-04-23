@@ -1,19 +1,18 @@
 /**
  * Sentry integration — error tracking + structured events.
  *
- * Initialized at startup if SENTRY_DSN is set. All helpers are no-ops when
- * Sentry is not configured, so code can call them unconditionally.
+ * Primary init happens in src/instrument.ts, preloaded via
+ * `node --import ./dist/instrument.js`. This file provides helper functions
+ * (reportTurnToSentry, withChatSpan) and a fallback init for when preload
+ * didn't happen (e.g. running `node dist/index.js` directly or in tests).
  *
- * IMPORTANT: Auto-instrumentation (OpenTelemetry HTTP/Express patching) is
- * DISABLED. The @sentry/node v8+ auto-instrumentation requires Sentry.init()
- * to run BEFORE any other module imports — our setup imports express/http
- * first, which causes request hangs in production. We use manual capture
- * (captureException, captureMessage, withScope) which works regardless of
- * import order. Performance spans are no-ops.
+ * The fallback init is SAFE: it disables all auto-instrumentation so a late
+ * init never hangs HTTP. When preload DID happen, initSentry() detects it
+ * and becomes a no-op, letting the preload's full instrumentation remain.
  *
  * Env:
- *   SENTRY_DSN           — DSN from Sentry project settings
- *   SENTRY_ENVIRONMENT   — "production" | "staging" | ... (default: NODE_ENV)
+ *   SENTRY_DSN           — DSN from Sentry project settings (required for init)
+ *   SENTRY_ENVIRONMENT   — default: NODE_ENV
  *   SENTRY_RELEASE       — release tag
  */
 
@@ -30,18 +29,23 @@ export function initSentry(): void {
     return;
   }
 
+  // Preload (src/instrument.ts via --import) already initialized Sentry →
+  // don't re-init, keep full auto-instrumentation active.
+  if (Sentry.getClient()) {
+    initialized = true;
+    console.log("[sentry] Already initialized via preload (auto-instrumentation active)");
+    return;
+  }
+
+  // Fallback path: no preload → safe manual-capture mode (no module patching).
   Sentry.init({
     dsn,
     environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? "production",
     release: process.env.SENTRY_RELEASE,
     sendDefaultPii: false,
-    // Disable performance tracing — no auto-spans, no module patching
     tracesSampleRate: 0,
-    // Skip OpenTelemetry auto-setup — prevents HTTP/Express hang on late init
     skipOpenTelemetrySetup: true,
-    // Don't register ESM loader hooks (we're already imported)
     registerEsmLoaderHooks: false,
-    // Replace default integrations with a minimal set that doesn't patch modules
     defaultIntegrations: false,
     integrations: [
       Sentry.consoleIntegration(),
@@ -51,7 +55,7 @@ export function initSentry(): void {
   });
 
   initialized = true;
-  console.log("[sentry] Initialized (manual capture mode)");
+  console.log("[sentry] Initialized (fallback manual-capture mode — not preloaded)");
 }
 
 export function isSentryEnabled(): boolean {
@@ -123,16 +127,17 @@ export function reportTurnToSentry(turn: TurnLog): void {
 }
 
 /**
- * Wraps a chat turn — currently a no-op pass-through.
- * Performance spans require OpenTelemetry which we disable; kept for API
- * compatibility in case we re-enable tracing via --import preload later.
+ * Wraps a chat turn in a performance span.
+ * When Sentry is preloaded, this creates a real OpenTelemetry span visible
+ * in Performance / Traces. In fallback mode it is a no-op pass-through.
  */
 export async function withChatSpan<T>(
-  _name: string,
-  _attrs: Record<string, string | number | boolean>,
+  name: string,
+  attrs: Record<string, string | number | boolean>,
   fn: () => Promise<T>
 ): Promise<T> {
-  return fn();
+  if (!initialized) return fn();
+  return Sentry.startSpan({ name, op: "chat", attributes: attrs }, fn);
 }
 
 export { Sentry };

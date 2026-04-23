@@ -2,6 +2,7 @@
  * Planda Assistant — Workflow (OpenAI Agents SDK)
  */
 import type { ChatMessage } from "./sessionStore.js";
+import type { ToolCallLog } from "./logger.js";
 export interface ChatInput {
     message: string;
     history: ChatMessage[];
@@ -9,6 +10,8 @@ export interface ChatInput {
 export interface ChatOutput {
     response: string;
     updatedHistory: ChatMessage[];
+    toolCalls?: ToolCallLog[];
+    model?: string;
 }
 export interface ChatStreamCallbacks {
     onStatus?: (message: string) => void;
@@ -25,5 +28,7 @@ export type WorkflowInput = {
 };
 export declare const runWorkflow: (workflow: WorkflowInput) => Promise<{
     output_text: string;
+    toolCalls: ToolCallLog[] | undefined;
+    model: string | undefined;
 }>;
 //# sourceMappingURL=workflow.d.ts.map
