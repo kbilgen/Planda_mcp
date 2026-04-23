@@ -33,6 +33,10 @@ import type { Therapist } from "./types.js";
 import { logTurn, type GuardViolation, type ToolCallLog } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch } from "./guards/intentClassifier.js";
 import { verifyResponse } from "./guards/hallucinationGuard.js";
+import { initSentry, Sentry } from "./sentry.js";
+
+// Sentry must initialize before any other import that might throw
+initSentry();
 
 // ─── Therapist list cache ─────────────────────────────────────────────────────
 
@@ -726,10 +730,12 @@ async function runHttp(): Promise<void> {
 
 process.on("uncaughtException", (err) => {
   console.error("[planda] Uncaught exception:", err);
+  try { Sentry.captureException(err); } catch {}
   process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("[planda] Unhandled rejection:", reason);
+  try { Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason))); } catch {}
   process.exit(1);
 });
 

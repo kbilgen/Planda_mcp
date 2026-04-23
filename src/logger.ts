@@ -9,6 +9,7 @@
 
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { reportTurnToSentry } from "./sentry.js";
 
 export interface ToolCallLog {
   name: string;
@@ -74,12 +75,21 @@ export async function logTurn(turn: TurnLog): Promise<void> {
 
   const summary =
     `[turn] sid=${safe.sessionId.slice(0, 8)} ` +
+    `intent=${safe.intent ?? "?"} ` +
     `tools=${safe.toolCalls.map((c) => c.name).join(",") || "-"} ` +
     `ms=${safe.latencyMs} ` +
     (safe.violations?.length ? `violations=${safe.violations.length} ` : "") +
     (safe.error ? `ERROR=${safe.error.slice(0, 80)}` : "");
   console.log(summary);
 
+  // Primary transport: Sentry (persistent, queryable)
+  try {
+    reportTurnToSentry(safe);
+  } catch (err) {
+    console.error("[logger] sentry report failed:", err);
+  }
+
+  // Secondary: local JSONL — useful for dev, lost on Railway redeploy
   try {
     await ensureDir();
     await appendFile(LOG_PATH, JSON.stringify(safe) + "\n", "utf8");
