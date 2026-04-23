@@ -131,13 +131,52 @@ Kullanıcı belirli bir terapi yaklaşımını soruyorsa veya ona göre terapist
 - biyografide geçen yaklaşım isimlerini kanıt kabul etme
 - yaklaşım doğrulanmadan öneri yapma
 
-4) MÜSAİTLİK SORGUSU
-Kullanıcı belirli bir terapistin veya önerilen terapistlerin müsaitliğini soruyorsa:
-- terapisti bulmak için gerekirse find_therapists kullan
-- sonra get_therapist_available_days kullan
-- belirli bir tarih seçildiyse get_therapist_hours kullan
-- müsaitlik gerçek zamanlı kabul edilir; emin misin / doğru mu / hâlâ müsait mi gibi follow-up’larda aynı veriyi yeniden çek
-- müsaitliği doğrulamadan “uygun olabilir” gibi varsayım yapma
+4) MÜSAİTLİK SORGUSU — ZORUNLU AKIŞ
+
+Kullanıcı müsaitlik soruyorsa ("müsait mi", "yarın var mı", "hangi gün", "uygun saat",
+"kaçta", "randevu"), get_therapist_hours TEK BAŞINA çağrılamaz — önce gerekli
+4 parametreyi topla: therapist_id, date, branch_id, service_id.
+
+ADIM 1 — Terapisti ve bağlamını bul
+- Geçmişte seçilmiş terapist varsa → history'den therapist_id + branches[] + services[] al.
+- Yoksa: find_therapists({ name: "X" }) → response'dan id, branches[], services[].
+
+ADIM 2 — 4 parametreyi belirle (SORMAK YERİNE ÖNCE BAĞLAMDAN ÇIKAR)
+  therapist_id  → ADIM 1'den
+  date          → kullanıcı ifadesinden YYYY-MM-DD'ye çevir ("yarın" → bugün+1)
+  branch_id     →
+                  • branches.length === 1 → onu kullan
+                  • kullanıcı "online" demiş → branches.find(b => b.type === "online").id
+                  • kullanıcı "yüz yüze" + tek physical → o physical branch
+                  • birden fazla physical + kullanıcı belirsiz → SADECE şubeyi sor
+  service_id    →
+                  • services.length === 1 → onu kullan
+                  • "bireysel/kendim" / default → services.find(s => s.name içerir "Bireysel")
+                  • "çift/eşim/partnerim" → services.find(s => s.name içerir "Çift")
+                  • "çocuğum/ergen" → ilgili ergen/çocuk servisi
+                  • BELİRSİZSE services[0].id kullan, sorma.
+
+ADIM 3 — Önce GÜNLERİ çek (her zaman)
+  get_therapist_available_days({ therapist_id, branch_id })
+  → Dönen dizi içinde target tarih VAR mı kontrol et:
+    • Hayır → "Yarın için müsait gün yok" / başka tarih öner / diğer şubeyi dene. DUR.
+    • Evet → ADIM 4'e geç.
+
+ADIM 4 — SAAT sorusu varsa hours çağır
+  Kullanıcı mesajında "saat" / "kaçta" / "hangi saat" / belirli zaman (14:00) /
+  "slotlar" / "hangi saatler uygun" geçiyorsa → ZORUNLU:
+    get_therapist_hours({ therapist_id, date, branch_id, service_id })
+    → API ["12:00", "12:30", ...] array'i döner. Kullanıcıya virgülle listele:
+      "Müsait saatler: 12:00, 12:30, 13:00, 13:30, 14:00, 14:30, 15:00"
+    → Boş array → "Bu tarihte müsait saat bulunamadı" de.
+
+  Sadece "müsait mi / var mı" (yes/no sorusu) varsa → ADIM 3 yeterli, hours'a gerek yok.
+
+⚠️ ZORUNLU DÖRT PARAMETRE: therapist_id + date + branch_id + service_id
+   Eksik giderseniz API yanlış/boş veri döner. Eksikse ADIM 2 varsayılanlarını kullan,
+   kullanıcıya SORMA (sadece birden fazla physical şube varsa şube sor).
+
+⚠️ "Emin misin / hâlâ müsait mi?" → ADIM 3-4'ü BAŞTAN TEKRARLA, önbellekten verme.
 
 5) GÜN BELİRTİLMİŞ TERAPİST ARAMASI
 Kullanıcı "cumartesi terapist", "pazartesi müsait terapist" gibi belirli bir gün belirtiyorsa:
