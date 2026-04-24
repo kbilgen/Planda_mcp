@@ -22,6 +22,15 @@ export declare const HALLUCINATION_FALLBACK: string;
  */
 export declare const NO_MATCH_FALLBACK: string;
 /**
+ * Shown when the user asks *how* the previous recommendation was made
+ * ("nasıl seçtin", "neye göre") and the model tries to answer without
+ * actually re-consulting the API. Previously the model would fabricate
+ * methodology ("approaches[] listesine baktım") — NODE-1. This honest
+ * fallback invites a live re-verification instead.
+ */
+export declare const EXPLANATION_FALLBACK: string;
+export declare function detectMetaHallucination(text: string): boolean;
+/**
  * Decides whether a response should be replaced with the safe fallback based
  * on verification output. Logic (intentionally conservative):
  *

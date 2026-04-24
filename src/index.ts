@@ -43,6 +43,8 @@ import {
   shouldUseFallback,
   HALLUCINATION_FALLBACK,
   NO_MATCH_FALLBACK,
+  EXPLANATION_FALLBACK,
+  detectMetaHallucination,
   extractMismatchedUsernames,
   pruneMismatchedCards,
   injectStructuredMatchBlocks,
@@ -307,6 +309,46 @@ async function guardResponse(
   userMessage?: string
 ): Promise<GuardedResponse> {
   const violations: GuardViolation[] = [];
+
+  // ── explanation_request hard block (NODE-1 class) ────────────────────────
+  // When the user asks "nasıl seçtin" / "neye göre", the model must either
+  // re-consult the API or refuse honestly — never fabricate methodology.
+  // If zero tools were called this turn, any "I checked approaches[]..."
+  // style answer is invented. Replace with EXPLANATION_FALLBACK which
+  // offers a live re-verification instead.
+  if (intent?.intent === "explanation_request" && toolCallCount === 0) {
+    violations.push({ kind: "other", detail: "explanation_without_tool_call" });
+    try {
+      Sentry.captureMessage("explanation_request without tool — replaced", {
+        level: "error",
+        tags: {
+          kind: "explanation_fallback",
+          intent: intent.intent,
+          tool_count: "0",
+        },
+      });
+    } catch {}
+    return { response: EXPLANATION_FALLBACK, replaced: true, violations };
+  }
+
+  // ── Meta-hallucination phrase detector ──────────────────────────────────
+  // Belt-and-suspenders for the above: even on non-explanation intents, the
+  // model sometimes volunteers "approaches[] listesini kontrol ettim" style
+  // phrasing. With zero tool calls this is always fabricated. Replace.
+  if (toolCallCount === 0 && detectMetaHallucination(rawResponse)) {
+    violations.push({ kind: "other", detail: "meta_hallucination_phrase" });
+    try {
+      Sentry.captureMessage("Meta-hallucination phrase detected — replaced", {
+        level: "error",
+        tags: {
+          kind: "meta_hallucination",
+          intent: intent?.intent ?? "unknown",
+        },
+      });
+    } catch {}
+    return { response: EXPLANATION_FALLBACK, replaced: true, violations };
+  }
+
   let hallucinations: Awaited<ReturnType<typeof verifyResponse>> = [];
   try {
     hallucinations = await verifyResponse(rawResponse);
@@ -653,7 +695,7 @@ async function runHttp(): Promise<void> {
       sessionId
     );
 
-    const intent = classifyIntent(message);
+    const intent = classifyIntent(message, history);
     const forceToolCall = shouldForceToolCall(intent);
 
     const startedAt = Date.now();
@@ -752,16 +794,16 @@ async function runHttp(): Promise<void> {
 
     const keepalive = setInterval(() => { try { res.write(": keepalive\n\n"); } catch { clearInterval(keepalive); } }, 15000);
 
-    const intent = classifyIntent(message);
+    const history = await resolveHistory(
+      Array.isArray(body.history) ? body.history : null,
+      sessionId
+    );
+
+    const intent = classifyIntent(message, history);
     const forceToolCall = shouldForceToolCall(intent);
 
     const startedAt = Date.now();
     try {
-      const history = await resolveHistory(
-        Array.isArray(body.history) ? body.history : null,
-        sessionId
-      );
-
       let fullText = "";
 
       const { updatedHistory, toolCalls, model } = await runChatStream(
@@ -845,7 +887,7 @@ async function runHttp(): Promise<void> {
       return;
     }
 
-    const intent = classifyIntent(message);
+    const intent = classifyIntent(message, history);
     const forceToolCall = shouldForceToolCall(intent);
 
     const startedAt = Date.now();

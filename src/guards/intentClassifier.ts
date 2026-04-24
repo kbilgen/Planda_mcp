@@ -104,7 +104,16 @@ function hasAny(haystack: string, keys: string[]): string[] {
   return keys.filter((k) => haystack.includes(k));
 }
 
-export function classifyIntent(message: string): IntentResult {
+/** Lightweight message shape for the history parameter — matches ChatMessage. */
+export interface ClassifierHistoryItem {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export function classifyIntent(
+  message: string,
+  history?: ClassifierHistoryItem[]
+): IntentResult {
   const n = NORMALIZE(message.trim());
   if (!n) return { intent: "unknown", expectedTools: [], matched: [] };
 
@@ -120,6 +129,32 @@ export function classifyIntent(message: string): IntentResult {
       expectedTools: ["find_therapists", "get_therapist"],
       matched: explanationMatches,
     };
+  }
+
+  // Disambiguation step 0.5: continuation of an earlier clarification.
+  //
+  // If the last assistant turn ended with a question ("Hangi şehirdesin?")
+  // the user's next message is almost certainly answering it — not starting
+  // a brand-new search intent. Without this check, short replies like
+  // "İstanbul Kartal" or "30 yaşındayım" get flagged as search_therapist
+  // with forceToolCall=true, producing fallback messages when the model
+  // can't ground a full search from one fragment (NODE-3).
+  //
+  // Runs AFTER explanation_request because meta-questions take priority
+  // regardless of whether the previous turn was a question.
+  if (history && history.length > 0) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const prev = history[i];
+      if (prev.role !== "assistant") continue;
+      if (prev.content.trim().endsWith("?")) {
+        return {
+          intent: "clarification",
+          expectedTools: [],
+          matched: ["continuation_of_question"],
+        };
+      }
+      break; // only consider the MOST RECENT assistant turn
+    }
   }
 
   // Disambiguation step 1: "hangi terapist/psikolog/uzman" is ALWAYS search,

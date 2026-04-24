@@ -83,6 +83,44 @@ export const NO_MATCH_FALLBACK =
   "veya başka bir şehir ile tekrar bakabilirim.";
 
 /**
+ * Shown when the user asks *how* the previous recommendation was made
+ * ("nasıl seçtin", "neye göre") and the model tries to answer without
+ * actually re-consulting the API. Previously the model would fabricate
+ * methodology ("approaches[] listesine baktım") — NODE-1. This honest
+ * fallback invites a live re-verification instead.
+ */
+export const EXPLANATION_FALLBACK =
+  "Önceki önerinin tam dayanağını şu an yeniden doğrulamam gerekiyor. " +
+  "İstersen güncel listeye bakıp sana birkaç terapist yeniden öneririm — " +
+  "aynı kriterlerle mi devam edelim, yoksa başka bir konu eklemek ister misin?";
+
+/**
+ * Phrases the model tends to fabricate when asked for methodology. These
+ * describe *internal processes* (API field lookups, database queries,
+ * programmatic filtering) that are never grounded in anything the user
+ * could verify — and the model reliably invents them even when no tool
+ * was called that turn. If one of these appears alongside zero tool calls,
+ * we treat the response as meta-hallucinated and replace it.
+ */
+const META_HALLUCINATION_PHRASES = [
+  "approaches[]",
+  "approaches listesi",
+  "planda veritaban",
+  "veritabanında kontrol",
+  "veritabanını kontrol",
+  "veri tabanı",
+  "listesine baktım",
+  "listesini kontrol ettim",
+  "kriterlerine göre filtreledi",
+  "kriterlerine göre filtrelemişti",
+];
+
+export function detectMetaHallucination(text: string): boolean {
+  const lower = text.toLowerCase();
+  return META_HALLUCINATION_PHRASES.some((p) => lower.includes(p));
+}
+
+/**
  * Decides whether a response should be replaced with the safe fallback based
  * on verification output. Logic (intentionally conservative):
  *
@@ -560,9 +598,14 @@ export async function injectStructuredMatchBlocks(
     if (t.username) byUsername.set(t.username, t);
   }
 
-  // Pass A — strip LLM-authored "Neden uygun:" narrative lines.
-  // These are the main surface where fabricated credentials leaked in.
-  let result = text.replace(/^[ \t]*Neden uygun:[^\n]*\n?/gim, "");
+  // Pass A — strip LLM-authored narrative lines inside cards.
+  // These are the main surface where fabricated credentials leaked in
+  // ("Neden uygun: BDT eğitimi mevcut", "Yaklaşım: Gestalt ve psikodinamik").
+  // The prompt tells the model not to produce these, but older conversation
+  // history + occasional slips still include them — strip defensively.
+  let result = text
+    .replace(/^[ \t]*Neden uygun:[^\n]*\n?/gim, "")
+    .replace(/^[ \t]*Yaklaşım:[^\n]*\n?/gim, "");
 
   // Pass B — inject Eşleşme block immediately before each [[expert:slug]] tag.
   const tagPat = /([ \t]*)(\[\[expert:([^\]]+)\]\])/g;

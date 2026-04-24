@@ -296,3 +296,61 @@ test("mismatch FIRED when explanation answer fabricates methodology", () => {
   assert.equal(m.length, 1);
   assert.match(m[0], /find_therapists|get_therapist/);
 });
+
+// ─── NODE-3 — history-aware continuation ─────────────────────────────────────
+// Short user replies to an assistant's clarifying question must NOT be
+// re-classified as a fresh search intent (which would forceToolCall and
+// eventually produce a fallback when the model can't ground a search from
+// a fragment like "İstanbul Kartal").
+
+test("'Ben İstanbul Kartalda oturuyorum' after assistant question → clarification", () => {
+  const history = [
+    { role: "user" as const, content: "terapist arıyorum" },
+    { role: "assistant" as const, content: "Hangi şehirdesin?" },
+  ];
+  const r = classifyIntent("Ben İstanbul Kartalda oturuyorum", history);
+  assert.equal(r.intent, "clarification");
+  assert.deepEqual(r.expectedTools, []);
+});
+
+test("'30 yaşındayım' after assistant question → clarification", () => {
+  const history = [
+    { role: "user" as const, content: "çocuğum için" },
+    { role: "assistant" as const, content: "Kaç yaşında?" },
+  ];
+  const r = classifyIntent("30 yaşındayım", history);
+  assert.equal(r.intent, "clarification");
+});
+
+test("new search classified normally when last assistant DIDN'T ask", () => {
+  const history = [
+    { role: "user" as const, content: "merhaba" },
+    { role: "assistant" as const, content: "Sana nasıl yardım edebilirim." },
+  ];
+  const r = classifyIntent("İstanbul'da anksiyete için terapist arıyorum", history);
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("explanation_request takes priority over continuation check", () => {
+  const history = [
+    { role: "assistant" as const, content: "Bu iki ismi öneriyorum. Başka soru?" },
+  ];
+  const r = classifyIntent("BDT olanları neye göre seçtin", history);
+  assert.equal(r.intent, "explanation_request");
+});
+
+test("no history → classifier works as before (backward compat)", () => {
+  const r = classifyIntent("İstanbul'da anksiyete için psikolog arıyorum");
+  assert.equal(r.intent, "search_therapist");
+});
+
+test("only most recent assistant turn considered (older questions ignored)", () => {
+  const history = [
+    { role: "assistant" as const, content: "Hangi şehirdesin?" },
+    { role: "user" as const, content: "İstanbul" },
+    { role: "assistant" as const, content: "Sana 2 isim buldum." },
+  ];
+  const r = classifyIntent("İlişki için anksiyete için psikolog lazım", history);
+  assert.equal(r.intent, "search_therapist");
+});

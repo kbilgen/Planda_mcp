@@ -10,7 +10,12 @@ export interface IntentResult {
     expectedTools: string[];
     matched: string[];
 }
-export declare function classifyIntent(message: string): IntentResult;
+/** Lightweight message shape for the history parameter — matches ChatMessage. */
+export interface ClassifierHistoryItem {
+    role: "user" | "assistant";
+    content: string;
+}
+export declare function classifyIntent(message: string, history?: ClassifierHistoryItem[]): IntentResult;
 /**
  * Returns true when the classifier is confident a tool call is required —
  * used to flip Runner.modelSettings.toolChoice to "required" for this turn.

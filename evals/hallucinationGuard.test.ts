@@ -14,6 +14,7 @@ import {
   extractMismatchedUsernames,
   pruneMismatchedCards,
   buildMatchBlock,
+  detectMetaHallucination,
 } from "../src/guards/hallucinationGuard.js";
 import type { Therapist } from "../src/types.js";
 
@@ -215,4 +216,31 @@ test("buildMatchBlock ✗ bütçe when therapist fee exceeds user cap", () => {
   const req = extractUserRequest("bütçem 3000");
   const block = buildMatchBlock(fakeTherapist, req);
   assert.match(block, /✗ Bütçe: 6\.000 TL.*talebin: 3\.000 TL altı/);
+});
+
+// ─── NODE-1 — meta-hallucination phrase detector ─────────────────────────────
+
+test("detectMetaHallucination catches 'approaches[] listesini kontrol ettim'", () => {
+  const text =
+    "BDT olanları seçerken, Planda veritabanındaki terapistlerin terapötik " +
+    "yaklaşımlarını gösteren 'approaches[]' listesini kontrol ettim.";
+  assert.equal(detectMetaHallucination(text), true);
+});
+
+test("detectMetaHallucination catches 'Planda veritabanında kontrol'", () => {
+  const text = "Planda veritabanında kontrol ettim ve uygun terapistleri buldum.";
+  assert.equal(detectMetaHallucination(text), true);
+});
+
+test("detectMetaHallucination does NOT fire on normal therapist recommendation", () => {
+  const text =
+    "Anlattıklarına göre İstanbul'da yüz yüze görüşme yapabileceğin " +
+    "iki isim buldum. Ekin Alankuş Gestalt yaklaşımıyla çalışıyor.";
+  assert.equal(detectMetaHallucination(text), false);
+});
+
+test("detectMetaHallucination does NOT fire on fallback messages", () => {
+  const text =
+    "Önceki önerinin tam dayanağını şu an yeniden doğrulamam gerekiyor.";
+  assert.equal(detectMetaHallucination(text), false);
 });

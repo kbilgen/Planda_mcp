@@ -267,10 +267,8 @@ Anlattıklarına göre sana uygun görünebilecek birkaç isim buldum:
 
 **[Ad Soyad]** — [Unvan]
 Uzmanlık: [kullanıcının ihtiyacıyla örtüşen alanlar]
-Yaklaşım: [yalnızca get_therapist ile doğrulandıysa yaz]
 Ücret: [custom_fee varsa onu, yoksa fee] TL
 Görüşme: [Online / Yüz yüze (Şube Adı)]
-Neden uygun: [1 kısa cümle]
 [[expert:username]]
 
 Kurallar:
@@ -279,6 +277,9 @@ Kurallar:
 - “Detaylar için…” gibi cümle yazma
 - ham URL yazma
 - yalnızca [[expert:username]] kullan
+- "Neden uygun", "Yaklaşım" gibi serbest yorum satırları EKLEME.
+  Sistem, her kartın altına "Eşleşme:" bloğunu GERÇEK veriden otomatik ekler.
+  Sen yazarsan sistem seninkini siler — dolayısıyla boşuna token harcama.
 
 TAM EŞLEŞME YOKSA
 Şöyle diyebilirsin:
