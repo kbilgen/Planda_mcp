@@ -8,7 +8,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shouldUseFallback } from "../src/guards/hallucinationGuard.js";
+import {
+  shouldUseFallback,
+  extractUserRequest,
+  extractMismatchedUsernames,
+  pruneMismatchedCards,
+  buildMatchBlock,
+} from "../src/guards/hallucinationGuard.js";
+import type { Therapist } from "../src/types.js";
 
 test("no violations → keep response", () => {
   assert.equal(shouldUseFallback([], 1), false);
@@ -76,4 +83,136 @@ test("missing responseText arg — rule #5 skipped, #1–4 still apply", () => {
     shouldUseFallback([{ kind: "unknown_therapist", value: "X" }], 0),
     true
   );
+});
+
+// ─── Fix A — extractUserRequest / pruneMismatchedCards ───────────────────────
+
+test("extractUserRequest parses city, topic, budget, approach, online", () => {
+  const r = extractUserRequest(
+    "İstanbul'da anksiyete için BDT yapan online terapist, bütçem 3000"
+  );
+  assert.equal(r.city, "İstanbul");
+  assert.ok(r.topics.includes("kaygi"));
+  assert.equal(r.approach, "BDT / Bilişsel Davranışçı Terapi");
+  assert.equal(r.prefersOnline, true);
+  assert.equal(r.maxFee, 3000);
+});
+
+test("extractUserRequest returns empty when message is generic", () => {
+  const r = extractUserRequest("terapi arıyorum");
+  assert.equal(r.city, null);
+  assert.equal(r.maxFee, null);
+  assert.equal(r.approach, null);
+  assert.equal(r.prefersOnline, null);
+  assert.deepEqual(r.topics, []);
+});
+
+test("extractMismatchedUsernames pulls slugs from violation values", () => {
+  const set = extractMismatchedUsernames([
+    {
+      kind: "specialty_mismatch",
+      value: "ekin_alankus (user topic: iliski; therapist specialties: Travma)",
+    },
+    {
+      kind: "specialty_mismatch",
+      value: "yildiz_hacievliyagil_cuceloglu (user topic: iliski; ...)",
+    },
+    { kind: "unknown_therapist", value: "ignored" },
+  ]);
+  assert.equal(set.size, 2);
+  assert.ok(set.has("ekin_alankus"));
+  assert.ok(set.has("yildiz_hacievliyagil_cuceloglu"));
+});
+
+test("pruneMismatchedCards removes bad card, keeps good one", () => {
+  const response =
+    "Birkaç isim buldum:\n\n" +
+    "**Yıldız Hacıevliyagil** — Uzman Psikolog\n" +
+    "Uzmanlık: İlişkisel\n" +
+    "Ücret: 6500 TL\n" +
+    "[[expert:yildiz_hacievliyagil]]\n\n" +
+    "**Ekin Alankuş** — Uzman Psikolog\n" +
+    "Uzmanlık: Travma\n" +
+    "[[expert:ekin_alankus]]\n";
+  const result = pruneMismatchedCards(response, new Set(["ekin_alankus"]));
+  assert.equal(result.removedCount, 1);
+  assert.equal(result.keptCount, 1);
+  assert.ok(result.response.includes("yildiz_hacievliyagil"));
+  assert.ok(!result.response.includes("ekin_alankus"));
+  assert.ok(result.response.includes("Birkaç isim buldum"));
+});
+
+test("pruneMismatchedCards with empty set is noop", () => {
+  const text = "**Ekin Alankuş** — Uzman Psikolog\n[[expert:ekin_alankus]]";
+  const result = pruneMismatchedCards(text, new Set());
+  assert.equal(result.response, text);
+  assert.equal(result.removedCount, 0);
+});
+
+test("pruneMismatchedCards can remove all cards (keptCount=0 signals fallback)", () => {
+  const response =
+    "**A B** — T\n[[expert:a_b]]\n\n**C D** — T\n[[expert:c_d]]\n";
+  const result = pruneMismatchedCards(response, new Set(["a_b", "c_d"]));
+  assert.equal(result.keptCount, 0);
+  assert.equal(result.removedCount, 2);
+});
+
+// ─── Fix D — buildMatchBlock ─────────────────────────────────────────────────
+
+const fakeTherapist: Therapist = {
+  id: 1,
+  name: "Ekin",
+  surname: "Alankuş",
+  full_name: "Ekin Alankuş",
+  username: "ekin_alankus",
+  specialties: [
+    { id: 1, name: "İlişkisel Problemler" },
+    { id: 2, name: "Depresyon" },
+  ],
+  branches: [
+    { id: 10, type: "physical", name: "Nişantaşı", city: { id: 1, name: "İstanbul" } },
+    { id: 11, type: "online", name: "Online" },
+  ],
+  services: [
+    { id: 63, name: "Bireysel Terapi", fee: "6000.00" },
+  ],
+  approaches: [
+    { id: 1, name: "Gestalt" },
+  ],
+};
+
+test("buildMatchBlock shows ✓ lines for criteria the therapist matches", () => {
+  const req = extractUserRequest(
+    "İstanbul'da ilişki sorunu için terapist, bütçem 7000"
+  );
+  const block = buildMatchBlock(fakeTherapist, req);
+  assert.match(block, /Eşleşme:/);
+  assert.match(block, /✓ Uzmanlık: İlişkisel Problemler/);
+  assert.match(block, /✓ Şehir: İstanbul — Nişantaşı/);
+  assert.match(block, /✓ Bütçe: 6\.000 TL/);
+});
+
+test("buildMatchBlock shows — for approach when approaches[] not populated", () => {
+  const therapistNoApproach: Therapist = { ...fakeTherapist, approaches: [] };
+  const req = extractUserRequest("BDT yapan terapist");
+  const block = buildMatchBlock(therapistNoApproach, req);
+  assert.match(block, /— Yaklaşım.*BDT/);
+});
+
+test("buildMatchBlock shows ✗ when approach requested but not in approaches[]", () => {
+  const req = extractUserRequest("EMDR yapan terapist");
+  const block = buildMatchBlock(fakeTherapist, req);
+  assert.match(block, /✗ Yaklaşım: EMDR/);
+});
+
+test("buildMatchBlock returns empty string when user asked nothing checkable", () => {
+  const req = extractUserRequest("merhaba");
+  const block = buildMatchBlock(fakeTherapist, req);
+  assert.equal(block, "");
+});
+
+test("buildMatchBlock ✗ bütçe when therapist fee exceeds user cap", () => {
+  const req = extractUserRequest("bütçem 3000");
+  const block = buildMatchBlock(fakeTherapist, req);
+  assert.match(block, /✗ Bütçe: 6\.000 TL.*talebin: 3\.000 TL altı/);
 });

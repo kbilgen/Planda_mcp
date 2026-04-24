@@ -29,7 +29,7 @@ import { getHistory, saveHistory } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
-import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, } from "./guards/hallucinationGuard.js";
+import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, } from "./guards/hallucinationGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 // Sentry must initialize before any other import that might throw
 initSentry();
@@ -122,7 +122,7 @@ function findTherapist(therapists, query) {
 //  Pass 3 — Fix slugs and enrich bare tags
 //    Wrong slugs → correct API username.
 //    Bare tags (< 60 chars preceding text) → prepend Name / Fee / Location.
-async function postProcessResponse(text) {
+async function postProcessResponse(text, userMessage) {
     const hasBoldHeaders = /\*\*[^*\n]+\*\*\s*—/.test(text);
     const hasExpertTags = /\[\[expert:[^\]]+\]\]/.test(text);
     if (!hasBoldHeaders && !hasExpertTags)
@@ -219,6 +219,19 @@ async function postProcessResponse(text) {
             lines.push(`Görüşme: ${location}`);
         return lines.join("\n") + "\n" + correctTag;
     });
+    // ── Pass 4 (Fix D): Inject data-derived "Eşleşme" block per card ─────────
+    // Strips the LLM's "Neden uygun: ..." narrative — the surface where
+    // fabricated credentials ("BDT eğitimi mevcut", "8 yıl deneyimli") leaked —
+    // and replaces it with structured ✓/✗/— lines built from therapist fields.
+    // No-op when userMessage is absent (MCP tool calls, non-chat paths).
+    if (userMessage) {
+        try {
+            result = await injectStructuredMatchBlocks(result, userMessage);
+        }
+        catch (err) {
+            console.error("[postProcess] injectStructuredMatchBlocks error:", err);
+        }
+    }
     return result;
 }
 async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], intent, userMessage) {
@@ -234,10 +247,18 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
     for (const v of hallucinations) {
         violations.push({ kind: v.kind, detail: v.value });
     }
-    // Specialty-match check (padding hallucination): recommended therapist has
-    // real username but specialties[] don't cover the user's topic. Log only —
-    // don't replace response (topic inference is heuristic, false positives
-    // possible). Sentry shows them as warnings for prompt-tuning visibility.
+    // Specialty-match enforcement (Fix A): recommended therapist has a real
+    // username but specialties[] don't cover the user's topic. Previously we
+    // only logged; now we prune the offending cards before the user sees them.
+    //
+    // Policy:
+    //   mismatch = 0             → pass through
+    //   mismatch > 0, kept > 0   → strip bad cards, keep response with the good
+    //                              ones (violations still recorded for Sentry)
+    //   mismatch > 0, kept = 0   → every recommendation was off-topic; replace
+    //                              with NO_MATCH_FALLBACK rather than parade an
+    //                              empty response.
+    let workingResponse = rawResponse;
     if (userMessage) {
         try {
             const specMismatch = await verifySpecialtyMatch(userMessage, rawResponse);
@@ -245,17 +266,32 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
                 violations.push({ kind: v.kind, detail: v.value });
             }
             if (specMismatch.length > 0) {
-                console.warn(`[guard] specialty_mismatch × ${specMismatch.length}:`, specMismatch.map((v) => v.value).join(" | "));
+                const mismatchedSet = extractMismatchedUsernames(specMismatch.map((v) => ({ kind: v.kind, value: v.value })));
+                const pruned = pruneMismatchedCards(rawResponse, mismatchedSet);
+                console.warn(`[guard] specialty_mismatch × ${specMismatch.length}: ` +
+                    `pruned=${pruned.removedCount} kept=${pruned.keptCount}`);
                 try {
-                    Sentry.captureMessage("Specialty mismatch in recommendation", {
+                    Sentry.captureMessage("Specialty mismatch — cards pruned", {
                         level: "warning",
                         tags: {
-                            kind: "specialty_mismatch",
+                            kind: "specialty_mismatch_blocked",
                             mismatch_count: String(specMismatch.length),
+                            pruned: String(pruned.removedCount),
+                            kept: String(pruned.keptCount),
                         },
                     });
                 }
                 catch { }
+                if (pruned.keptCount === 0) {
+                    // All cards were off-topic — don't ship an empty response.
+                    return {
+                        response: NO_MATCH_FALLBACK,
+                        replaced: true,
+                        violations,
+                    };
+                }
+                // At least one valid card survived — continue with the pruned text.
+                workingResponse = pruned.response;
             }
         }
         catch (err) {
@@ -285,13 +321,13 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
             return { response: HALLUCINATION_FALLBACK, replaced: true, violations };
         }
     }
-    if (shouldUseFallback(hallucinations, toolCallCount, rawResponse)) {
+    if (shouldUseFallback(hallucinations, toolCallCount, workingResponse)) {
         // Detect rule #5 — therapist card with no tool call (NODE-2 class) — so
         // Sentry can distinguish this from classic unknown-name hallucinations.
         const cardNoTool = toolCallCount === 0 &&
             hallucinations.length === 0 &&
-            (/\*\*[^*\n]+\*\*\s*—/.test(rawResponse) ||
-                /\[\[expert:[^\]]+\]\]/.test(rawResponse));
+            (/\*\*[^*\n]+\*\*\s*—/.test(workingResponse) ||
+                /\[\[expert:[^\]]+\]\]/.test(workingResponse));
         if (cardNoTool) {
             violations.push({ kind: "other", detail: "card_without_tool_call" });
         }
@@ -312,7 +348,7 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
         catch { }
         return { response: HALLUCINATION_FALLBACK, replaced: true, violations };
     }
-    return { response: rawResponse, replaced: false, violations };
+    return { response: workingResponse, replaced: false, violations };
 }
 // ─── Observability pipeline ──────────────────────────────────────────────────
 //
@@ -489,7 +525,7 @@ async function runHttp() {
         const startedAt = Date.now();
         try {
             const { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history, forceToolCall });
-            const processed = await postProcessResponse(rawResponse);
+            const processed = await postProcessResponse(rawResponse, message);
             const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
             const response = guarded.response;
             // Store'u async güncelle — fallback devreye girdiyse gerçek konuşmayı
@@ -576,8 +612,8 @@ async function runHttp() {
                     sseWrite(res, "delta", { delta });
                 },
             });
-            // Post-process full text (fixes Turkish names + expert tags)
-            const processed = await postProcessResponse(fullText);
+            // Post-process full text (fixes Turkish names + expert tags + match block)
+            const processed = await postProcessResponse(fullText, message);
             const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
             const response = guarded.response;
             // If guard or post-processing changed the text, send corrected event so
@@ -639,7 +675,7 @@ async function runHttp() {
                 forceToolCall,
             });
             const rawText = result.output_text ?? JSON.stringify(result);
-            const processed = await postProcessResponse(rawText);
+            const processed = await postProcessResponse(rawText, message);
             const toolCalls = result.toolCalls;
             const guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
             const text = guarded.response;

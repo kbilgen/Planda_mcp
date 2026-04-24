@@ -60,6 +60,14 @@ function fuzzyMatchesAnyTherapist(query, therapists) {
 export const HALLUCINATION_FALLBACK = "Bu soruda bir aksaklık yaşadım ve doğru bilgi üretemedim. Lütfen mesajını " +
     "tekrar gönderebilir misin? Aradığın terapisti birlikte bulalım.";
 /**
+ * Shown when specialty-match enforcement prunes every card and none survive.
+ * Tone is "we narrowed too far" rather than "we broke" — honest about scope,
+ * invites the user to relax a filter instead of reporting a generic error.
+ */
+export const NO_MATCH_FALLBACK = "Aradığın kriterlere tam uyan bir terapist bulamadım. " +
+    "İstersen filtreleri biraz genişletelim — farklı bir alan, online seçeneği " +
+    "veya başka bir şehir ile tekrar bakabilirim.";
+/**
  * Decides whether a response should be replaced with the safe fallback based
  * on verification output. Logic (intentionally conservative):
  *
@@ -247,5 +255,263 @@ export async function verifySpecialtyMatch(userMessage, response) {
         }
     }
     return violations;
+}
+// ─── Specialty-mismatch enforcement (Fix A) ──────────────────────────────────
+//
+// Previously verifySpecialtyMatch only annotated/logged. This section turns
+// the verdict into action: cards whose therapist fails the topic check are
+// removed from the response before the user sees them. If every card fails,
+// the response is replaced with NO_MATCH_FALLBACK so we don't silently drop
+// the turn.
+/** Extract the therapist username slug from a violation .value string. */
+export function extractMismatchedUsernames(violations) {
+    const set = new Set();
+    for (const v of violations) {
+        if (v.kind !== "specialty_mismatch")
+            continue;
+        // value format: "<slug> (user topic: ...; therapist specialties: ...)"
+        const slug = v.value.match(/^([^\s(]+)/)?.[1];
+        if (slug)
+            set.add(slug);
+    }
+    return set;
+}
+/**
+ * Remove therapist cards whose username is in the mismatch set.
+ *
+ * A "card" is matched by regex as any block starting with a **Bold** — header
+ * and ending with its [[expert:slug]] tag (plus trailing whitespace). Non-card
+ * prose between cards (intro / outro / separators) is preserved verbatim.
+ */
+export function pruneMismatchedCards(text, mismatchedUsernames) {
+    if (mismatchedUsernames.size === 0) {
+        return { response: text, removedCount: 0, keptCount: 0 };
+    }
+    const cardPat = /\*\*[^*\n]+\*\*\s*—[\s\S]*?\[\[expert:([^\]]+)\]\]\s*/g;
+    let removed = 0;
+    let kept = 0;
+    const result = text.replace(cardPat, (match, slug) => {
+        if (mismatchedUsernames.has(slug)) {
+            removed++;
+            return "";
+        }
+        kept++;
+        return match;
+    });
+    return { response: result, removedCount: removed, keptCount: kept };
+}
+// Canonical approach labels — each has a set of user-side keywords (normalized
+// Turkish) and a substring to match against therapist.approaches[].name.
+const APPROACH_KEYWORDS = [
+    { canonical: "BDT / Bilişsel Davranışçı Terapi", userKeys: ["bdt", "cbt", "bilissel"], therapistSubstr: ["bilissel", "bilisel", "bdt", "cbt"] },
+    { canonical: "EMDR", userKeys: ["emdr"], therapistSubstr: ["emdr"] },
+    { canonical: "ACT", userKeys: ["act", "kabul ve kararlilik"], therapistSubstr: ["act", "kabul"] },
+    { canonical: "DBT", userKeys: ["dbt", "dialektik"], therapistSubstr: ["dbt", "dialektik"] },
+    { canonical: "Şema Terapisi", userKeys: ["sema", "schema"], therapistSubstr: ["sema", "schema"] },
+    { canonical: "Gestalt", userKeys: ["gestalt"], therapistSubstr: ["gestalt"] },
+    { canonical: "Psikanaliz", userKeys: ["psikanaliz", "psikodinamik"], therapistSubstr: ["psikanaliz", "psikodinamik"] },
+    { canonical: "Mindfulness", userKeys: ["mindfulness"], therapistSubstr: ["mindfulness", "farkindalik"] },
+];
+// Cities with active Planda presence — used to pull the user's city out of
+// their message. Capital letters preserved for display, matching uses normTR.
+const KNOWN_CITIES_DISPLAY = {
+    istanbul: "İstanbul",
+    ankara: "Ankara",
+    izmir: "İzmir",
+    bursa: "Bursa",
+    antalya: "Antalya",
+    adana: "Adana",
+    konya: "Konya",
+    gaziantep: "Gaziantep",
+    kayseri: "Kayseri",
+    eskisehir: "Eskişehir",
+    samsun: "Samsun",
+    mersin: "Mersin",
+    kocaeli: "Kocaeli",
+};
+/** Pull structured request attributes out of a free-form user message. */
+export function extractUserRequest(userMessage) {
+    const n = normTR(userMessage);
+    const topics = extractUserTopics(userMessage);
+    // City — first known city that appears in the normalized message
+    let city = null;
+    for (const [key, display] of Object.entries(KNOWN_CITIES_DISPLAY)) {
+        if (n.includes(key)) {
+            city = display;
+            break;
+        }
+    }
+    // Budget — "X TL altı", "bütçem X", "X TL", but bound to reasonable range.
+    // Two-pass: explicit budget phrasing first, then standalone fee number.
+    let maxFee = null;
+    const budgetMatch = n.match(/b(?:u|ue)tce(?:m)?\s*(\d{3,6})/) ||
+        n.match(/(\d{3,6})\s*tl\s*(?:alti|alta|altinda|altın)/);
+    if (budgetMatch) {
+        const v = parseInt(budgetMatch[1], 10);
+        if (v >= 500 && v <= 20000)
+            maxFee = v;
+    }
+    // Approach — first canonical match wins
+    let approach = null;
+    for (const a of APPROACH_KEYWORDS) {
+        if (a.userKeys.some((k) => n.includes(k))) {
+            approach = a.canonical;
+            break;
+        }
+    }
+    // Online vs. physical preference
+    let prefersOnline = null;
+    if (/\bonline\b/.test(n))
+        prefersOnline = true;
+    else if (/\byuz\s*yuze\b|\byuzyuze\b/.test(n))
+        prefersOnline = false;
+    return { topics, city, maxFee, approach, prefersOnline };
+}
+/** Resolve user topics to the specialty names that cover them for this therapist. */
+function matchedSpecialtyNames(t, topics) {
+    const names = (t.specialties ?? []).map((s) => s?.name ?? "").filter(Boolean);
+    const out = new Set();
+    for (const topic of topics) {
+        const rule = TOPIC_SPECIALTY_MAP[topic];
+        if (!rule)
+            continue;
+        for (const name of names) {
+            const n = normTR(name);
+            if (rule.specialtySubstr.some((sub) => n.includes(sub)))
+                out.add(name);
+        }
+    }
+    return [...out];
+}
+/**
+ * Build the "Eşleşme" multi-line block for one therapist, given the user's
+ * request. Returns empty string if the user asked nothing checkable.
+ *
+ *   Eşleşme:
+ *   ✓ Uzmanlık: İlişkisel Problemler
+ *   ✓ Şehir: İstanbul — Nişantaşı
+ *   ✓ Bütçe: 6.000 TL (talebin: 7.000 TL altı)
+ *   — Yaklaşım (BDT): profilde henüz doğrulanmadı
+ */
+export function buildMatchBlock(t, req) {
+    const lines = [];
+    // Uzmanlık
+    if (req.topics.length > 0) {
+        const matched = matchedSpecialtyNames(t, req.topics);
+        if (matched.length > 0) {
+            lines.push(`✓ Uzmanlık: ${matched.join(", ")}`);
+        }
+        // Note: a ✗ on specialty would be pruned by Fix A before reaching here,
+        // so we only render the positive case.
+    }
+    // Şehir / görüşme tipi
+    if (req.city) {
+        const reqCityNorm = normTR(req.city);
+        const physical = (t.branches ?? []).filter((b) => b.type === "physical");
+        const cityBranch = physical.find((b) => b.city?.name && normTR(b.city.name) === reqCityNorm);
+        if (cityBranch) {
+            const label = [cityBranch.city?.name, cityBranch.name]
+                .filter(Boolean)
+                .join(" — ");
+            lines.push(`✓ Şehir: ${label}`);
+        }
+        else {
+            const hasOnline = (t.branches ?? []).some((b) => b.type === "online");
+            if (hasOnline) {
+                lines.push(`— Şehir: ${req.city}'da şube yok, online görüşme mümkün`);
+            }
+            else {
+                lines.push(`✗ Şehir: ${req.city}'da şube yok`);
+            }
+        }
+    }
+    else if (req.prefersOnline === true) {
+        const hasOnline = (t.branches ?? []).some((b) => b.type === "online");
+        lines.push(hasOnline ? `✓ Görüşme: Online` : `✗ Görüşme: Online seçenek yok`);
+    }
+    // Bütçe
+    if (req.maxFee !== null) {
+        const fees = (t.services ?? [])
+            .map((s) => {
+            const raw = s.custom_fee ?? s.fee;
+            if (!raw)
+                return null;
+            const f = parseFloat(raw);
+            return Number.isFinite(f) ? Math.round(f) : null;
+        })
+            .filter((n) => n !== null);
+        if (fees.length > 0) {
+            const minFee = Math.min(...fees);
+            const tl = (n) => n.toLocaleString("tr-TR");
+            const ok = minFee <= req.maxFee;
+            lines.push(`${ok ? "✓" : "✗"} Bütçe: ${tl(minFee)} TL` +
+                ` (talebin: ${tl(req.maxFee)} TL altı)`);
+        }
+    }
+    // Yaklaşım — only reliable if get_therapist has populated approaches[]
+    if (req.approach) {
+        const rule = APPROACH_KEYWORDS.find((a) => a.canonical === req.approach);
+        const approachNames = (t.approaches ?? [])
+            .map((a) => a?.name ?? "")
+            .filter(Boolean);
+        if (approachNames.length === 0) {
+            lines.push(`— Yaklaşım (${req.approach}): profil detayından doğrulanabilir`);
+        }
+        else if (rule) {
+            const hasIt = approachNames.some((name) => {
+                const n = normTR(name);
+                return rule.therapistSubstr.some((sub) => n.includes(sub));
+            });
+            lines.push(hasIt
+                ? `✓ Yaklaşım: ${req.approach} (onaylandı)`
+                : `✗ Yaklaşım: ${req.approach} profilde görünmüyor`);
+        }
+    }
+    if (lines.length === 0)
+        return "";
+    return `Eşleşme:\n${lines.join("\n")}`;
+}
+/**
+ * Strip the LLM's free-form "Neden uygun:" narrative line from every card,
+ * then inject the data-derived Eşleşme block right before each [[expert:slug]]
+ * tag. No-op when the user didn't ask for anything checkable.
+ *
+ * Runs as the last pass of postProcessResponse, after card names/slugs are
+ * already corrected — so by the time we look up each slug, it's reliable.
+ */
+export async function injectStructuredMatchBlocks(text, userMessage) {
+    if (!/\[\[expert:[^\]]+\]\]/.test(text))
+        return text;
+    const req = extractUserRequest(userMessage);
+    const hasCriteria = req.topics.length > 0 ||
+        req.city !== null ||
+        req.maxFee !== null ||
+        req.approach !== null ||
+        req.prefersOnline !== null;
+    if (!hasCriteria)
+        return text;
+    const therapists = await getRoster();
+    if (therapists.length === 0)
+        return text;
+    const byUsername = new Map();
+    for (const t of therapists) {
+        if (t.username)
+            byUsername.set(t.username, t);
+    }
+    // Pass A — strip LLM-authored "Neden uygun:" narrative lines.
+    // These are the main surface where fabricated credentials leaked in.
+    let result = text.replace(/^[ \t]*Neden uygun:[^\n]*\n?/gim, "");
+    // Pass B — inject Eşleşme block immediately before each [[expert:slug]] tag.
+    const tagPat = /([ \t]*)(\[\[expert:([^\]]+)\]\])/g;
+    result = result.replace(tagPat, (_full, indent, tag, slug) => {
+        const t = byUsername.get(slug);
+        if (!t)
+            return `${indent}${tag}`;
+        const block = buildMatchBlock(t, req);
+        if (!block)
+            return `${indent}${tag}`;
+        return `${block}\n${indent}${tag}`;
+    });
+    return result;
 }
 //# sourceMappingURL=hallucinationGuard.js.map
