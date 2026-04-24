@@ -103,12 +103,39 @@ export declare function extractUserRequest(userMessage: string): UserRequest;
  */
 export declare function buildMatchBlock(t: Therapist, req: UserRequest): string;
 /**
- * Strip the LLM's free-form "Neden uygun:" narrative line from every card,
- * then inject the data-derived Eşleşme block right before each [[expert:slug]]
- * tag. No-op when the user didn't ask for anything checkable.
+ * Build the "Uzmanlık:" line from therapist.specialties[] ONLY.
+ *
+ * The model sometimes conflates specialties[] (what the therapist is
+ * specialized in) with services[] (what session types they sell, e.g.
+ * "Çift ve Evlilik Terapisi", "Aile Danışmanlığı"). To the user, this
+ * looks like the therapist is credentialed in a field they're not.
+ * Rewriting the line from specialties[] only eliminates the confusion.
+ */
+export declare function buildSpecialtyLine(t: Therapist, userTopics: string[]): string;
+/**
+ * Build the "Görüşme:" line from branches[] ONLY — never from address strings.
+ *
+ * Addresses are free-text and sometimes contain confusing district layers
+ * (e.g. "Dikilitaş Mahallesi ... Beşiktaş Şişli"). The model used to parse
+ * these and produce "Yüz yüze (Beşiktaş, Şişli)" — user sees two districts
+ * for one branch. Using branches[].name (the canonical short label) plus
+ * type markers keeps the card factual.
+ */
+export declare function buildLocationLine(t: Therapist): string;
+/**
+ * End-to-end card rewriter:
+ *   1. Strip LLM-authored "Neden uygun:" and "Yaklaşım:" narrative lines.
+ *   2. Replace "Uzmanlık:" with a specialties[]-only line (kills service-name
+ *      mislabeling like "İlişkisel Problemler, Çift ve Evlilik Terapisi").
+ *   3. Replace "Görüşme:" with a branches[]-derived line (kills address
+ *      parsing hallucinations like "Beşiktaş, Şişli" from "Dikilitaş ...
+ *      Beşiktaş Şişli" in a single address string).
+ *   4. When the user provided checkable criteria (topic, city, budget,
+ *      approach, online), inject an "Eşleşme:" block right before the
+ *      [[expert:slug]] tag.
  *
  * Runs as the last pass of postProcessResponse, after card names/slugs are
- * already corrected — so by the time we look up each slug, it's reliable.
+ * already corrected — so every slug lookup is reliable.
  */
 export declare function injectStructuredMatchBlocks(text: string, userMessage: string): Promise<string>;
 //# sourceMappingURL=hallucinationGuard.d.ts.map

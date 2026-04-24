@@ -14,6 +14,8 @@ import {
   extractMismatchedUsernames,
   pruneMismatchedCards,
   buildMatchBlock,
+  buildSpecialtyLine,
+  buildLocationLine,
   detectMetaHallucination,
 } from "../src/guards/hallucinationGuard.js";
 import type { Therapist } from "../src/types.js";
@@ -243,4 +245,101 @@ test("detectMetaHallucination does NOT fire on fallback messages", () => {
   const text =
     "Önceki önerinin tam dayanağını şu an yeniden doğrulamam gerekiyor.";
   assert.equal(detectMetaHallucination(text), false);
+});
+
+// ─── Uzmanlık / Görüşme server-side override (Fix 1 + 2) ──────────────────────
+
+test("buildSpecialtyLine uses specialties[] only — NOT service names", () => {
+  const t: Therapist = {
+    id: 99,
+    name: "Test",
+    full_name: "Test T",
+    username: "test_t",
+    specialties: [
+      { id: 1, name: "İlişkisel Problemler" },
+      { id: 2, name: "Depresyon" },
+    ],
+    services: [
+      // These should NEVER appear in the specialty line
+      { id: 10, name: "Çift ve Evlilik Terapisi", fee: "5000" },
+      { id: 11, name: "Aile Danışmanlığı", fee: "3000" },
+    ],
+  };
+  const line = buildSpecialtyLine(t, []);
+  assert.match(line, /^Uzmanlık:/);
+  assert.match(line, /İlişkisel Problemler/);
+  assert.match(line, /Depresyon/);
+  // services[] names must NOT leak into specialty line
+  assert.doesNotMatch(line, /Çift ve Evlilik Terapisi/);
+  assert.doesNotMatch(line, /Aile Danışmanlığı/);
+});
+
+test("buildSpecialtyLine surfaces user-matched topic first", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    specialties: [
+      { id: 1, name: "Depresyon" },
+      { id: 2, name: "İlişkisel Problemler" },
+      { id: 3, name: "Kaygı(Anksiyete) ve Korku" },
+    ],
+  };
+  const line = buildSpecialtyLine(t, ["iliski"]);
+  // İlişkisel Problemler must appear before the others
+  const idxRel = line.indexOf("İlişkisel Problemler");
+  const idxDep = line.indexOf("Depresyon");
+  assert.ok(idxRel < idxDep, "user-matched topic should be listed first");
+});
+
+test("buildSpecialtyLine returns empty when no specialties", () => {
+  const t: Therapist = { id: 1, name: "T", specialties: [] };
+  assert.equal(buildSpecialtyLine(t, []), "");
+});
+
+test("buildLocationLine uses branches[] only, never address string", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    branches: [
+      {
+        id: 10,
+        type: "physical",
+        name: "Psikoterapistanbul Danışmanlık Merkezi",
+        city: { id: 1, name: "İstanbul" },
+        // Dirty address with two districts glued together — this is the
+        // Melisa Yılmaz Erdoğan case that used to produce "Beşiktaş, Şişli"
+        address: "Dikilitaş Mahallesi Hakkı Yeten Caddesi Selenium Plaza No:10/C 6.kat Daire No:613 Beşiktaş Şişli",
+      },
+      { id: 11, type: "online", name: "Online" },
+    ],
+  };
+  const line = buildLocationLine(t);
+  // Should include both Online and the branch name
+  assert.match(line, /Online/);
+  assert.match(line, /Psikoterapistanbul Danışmanlık Merkezi/);
+  // Must NOT leak the address hallucination
+  assert.doesNotMatch(line, /Beşiktaş, Şişli/);
+  assert.doesNotMatch(line, /Şişli/);
+});
+
+test("buildLocationLine renders multi-branch therapist correctly", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    branches: [
+      { id: 10, type: "physical", name: "Nişantaşı", city: { id: 1, name: "İstanbul" } },
+      { id: 11, type: "physical", name: "Göztepe", city: { id: 1, name: "İstanbul" } },
+      { id: 12, type: "online", name: "Online" },
+    ],
+  };
+  const line = buildLocationLine(t);
+  assert.match(line, /Online/);
+  assert.match(line, /Nişantaşı/);
+  assert.match(line, /Göztepe/);
+});
+
+test("buildLocationLine online-only therapist", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    branches: [{ id: 10, type: "online", name: "Online" }],
+  };
+  const line = buildLocationLine(t);
+  assert.equal(line, "Görüşme: Online");
 });

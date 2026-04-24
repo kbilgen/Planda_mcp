@@ -569,12 +569,64 @@ export function buildMatchBlock(t: Therapist, req: UserRequest): string {
 }
 
 /**
- * Strip the LLM's free-form "Neden uygun:" narrative line from every card,
- * then inject the data-derived Eşleşme block right before each [[expert:slug]]
- * tag. No-op when the user didn't ask for anything checkable.
+ * Build the "Uzmanlık:" line from therapist.specialties[] ONLY.
+ *
+ * The model sometimes conflates specialties[] (what the therapist is
+ * specialized in) with services[] (what session types they sell, e.g.
+ * "Çift ve Evlilik Terapisi", "Aile Danışmanlığı"). To the user, this
+ * looks like the therapist is credentialed in a field they're not.
+ * Rewriting the line from specialties[] only eliminates the confusion.
+ */
+export function buildSpecialtyLine(t: Therapist, userTopics: string[]): string {
+  const all = (t.specialties ?? [])
+    .map((s) => s?.name?.trim())
+    .filter((n): n is string => Boolean(n));
+  if (all.length === 0) return "";
+  const matched = userTopics.length > 0 ? matchedSpecialtyNames(t, userTopics) : [];
+  const rest = all.filter((n) => !matched.includes(n));
+  // Surface user-relevant specialties first; cap at 4 for readability.
+  const display = [...matched, ...rest].slice(0, 4);
+  return `Uzmanlık: ${display.join(", ")}`;
+}
+
+/**
+ * Build the "Görüşme:" line from branches[] ONLY — never from address strings.
+ *
+ * Addresses are free-text and sometimes contain confusing district layers
+ * (e.g. "Dikilitaş Mahallesi ... Beşiktaş Şişli"). The model used to parse
+ * these and produce "Yüz yüze (Beşiktaş, Şişli)" — user sees two districts
+ * for one branch. Using branches[].name (the canonical short label) plus
+ * type markers keeps the card factual.
+ */
+export function buildLocationLine(t: Therapist): string {
+  const physical = (t.branches ?? []).filter((b) => b?.type === "physical");
+  const hasOnline = (t.branches ?? []).some((b) => b?.type === "online");
+  const physLabels: string[] = [];
+  for (const b of physical) {
+    const name = (b?.name || "").trim();
+    if (name) physLabels.push(name);
+  }
+  const parts: string[] = [];
+  if (hasOnline) parts.push("Online");
+  if (physLabels.length > 0) parts.push(`Yüz yüze (${physLabels.join(" / ")})`);
+  if (parts.length === 0) return "";
+  return `Görüşme: ${parts.join(" / ")}`;
+}
+
+/**
+ * End-to-end card rewriter:
+ *   1. Strip LLM-authored "Neden uygun:" and "Yaklaşım:" narrative lines.
+ *   2. Replace "Uzmanlık:" with a specialties[]-only line (kills service-name
+ *      mislabeling like "İlişkisel Problemler, Çift ve Evlilik Terapisi").
+ *   3. Replace "Görüşme:" with a branches[]-derived line (kills address
+ *      parsing hallucinations like "Beşiktaş, Şişli" from "Dikilitaş ...
+ *      Beşiktaş Şişli" in a single address string).
+ *   4. When the user provided checkable criteria (topic, city, budget,
+ *      approach, online), inject an "Eşleşme:" block right before the
+ *      [[expert:slug]] tag.
  *
  * Runs as the last pass of postProcessResponse, after card names/slugs are
- * already corrected — so by the time we look up each slug, it's reliable.
+ * already corrected — so every slug lookup is reliable.
  */
 export async function injectStructuredMatchBlocks(
   text: string,
@@ -589,7 +641,6 @@ export async function injectStructuredMatchBlocks(
     req.maxFee !== null ||
     req.approach !== null ||
     req.prefersOnline !== null;
-  if (!hasCriteria) return text;
 
   const therapists = await getRoster();
   if (therapists.length === 0) return text;
@@ -598,24 +649,39 @@ export async function injectStructuredMatchBlocks(
     if (t.username) byUsername.set(t.username, t);
   }
 
-  // Pass A — strip LLM-authored narrative lines inside cards.
-  // These are the main surface where fabricated credentials leaked in
-  // ("Neden uygun: BDT eğitimi mevcut", "Yaklaşım: Gestalt ve psikodinamik").
-  // The prompt tells the model not to produce these, but older conversation
-  // history + occasional slips still include them — strip defensively.
-  let result = text
-    .replace(/^[ \t]*Neden uygun:[^\n]*\n?/gim, "")
-    .replace(/^[ \t]*Yaklaşım:[^\n]*\n?/gim, "");
+  // Operate on whole-card blocks so Uzmanlık/Görüşme rewrites stay scoped to
+  // the correct therapist. Pattern matches from a **Bold** — header through
+  // the trailing [[expert:slug]] tag.
+  const cardPat = /(\*\*[^*\n]+\*\*\s*—[\s\S]*?)(\[\[expert:([^\]]+)\]\])/g;
 
-  // Pass B — inject Eşleşme block immediately before each [[expert:slug]] tag.
-  const tagPat = /([ \t]*)(\[\[expert:([^\]]+)\]\])/g;
-  result = result.replace(tagPat, (_full, indent: string, tag: string, slug: string) => {
+  return text.replace(cardPat, (_m, body: string, tag: string, slug: string) => {
     const t = byUsername.get(slug);
-    if (!t) return `${indent}${tag}`;
-    const block = buildMatchBlock(t, req);
-    if (!block) return `${indent}${tag}`;
-    return `${block}\n${indent}${tag}`;
-  });
+    if (!t) return body + tag;
 
-  return result;
+    // 1. Strip free-form narrative lines
+    let rewritten = body
+      .replace(/^[ \t]*Neden uygun:[^\n]*\n?/gim, "")
+      .replace(/^[ \t]*Yaklaşım:[^\n]*\n?/gim, "");
+
+    // 2. Rewrite Uzmanlık from specialties[] only (if line exists)
+    const specLine = buildSpecialtyLine(t, req.topics);
+    if (specLine && /^[ \t]*Uzmanlık:/m.test(rewritten)) {
+      rewritten = rewritten.replace(/^[ \t]*Uzmanlık:[^\n]*$/m, specLine);
+    }
+
+    // 3. Rewrite Görüşme from branches[] only (if line exists)
+    const locLine = buildLocationLine(t);
+    if (locLine && /^[ \t]*Görüşme:/m.test(rewritten)) {
+      rewritten = rewritten.replace(/^[ \t]*Görüşme:[^\n]*$/m, locLine);
+    }
+
+    // 4. Inject Eşleşme block (only when user had checkable criteria)
+    if (hasCriteria) {
+      const block = buildMatchBlock(t, req);
+      if (block) {
+        return rewritten + block + "\n" + tag;
+      }
+    }
+    return rewritten + tag;
+  });
 }
