@@ -34,10 +34,16 @@ async function getRoster(): Promise<Therapist[]> {
 }
 
 function normTR(s: string): string {
-  return s.toLowerCase()
+  return s
+    // Handle Turkish capital İ BEFORE toLowerCase. JS toLowerCase on İ produces
+    // "i̇" (i + combining dot U+0307); the dot later gets stripped to a space
+    // by /[^a-z0-9 ]/ which splits "İlişkide" into "i liskide" — breaking any
+    // keyword match that starts with "i". Same fix as therapistFilters.normTR.
+    .replace(/İ/g, "i")
+    .replace(/I/g, "i")
+    .toLowerCase()
     .replace(/ş/g, "s").replace(/ğ/g, "g").replace(/ü/g, "u")
     .replace(/ö/g, "o").replace(/ı/g, "i").replace(/ç/g, "c")
-    .replace(/İ/g, "i").replace(/I/g, "i")
     .replace(/[^a-z0-9 ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -171,24 +177,49 @@ export async function verifyResponse(text: string): Promise<HallucinationViolati
 // This guard extracts topic keywords from the user message, cross-checks
 // each recommended therapist's specialties[], and flags mismatches.
 
-// Topic → substring(s) that should appear in specialties[].name (normTR form)
+// Topic → substring(s) that should appear in specialties[].name (normTR form).
+// userWords are matched with WORD-BOUNDARY awareness: short tokens (< 5 chars)
+// must appear as a whole word in the message; longer tokens are allowed as
+// prefix matches so "iliskide" (from "İlişkide") still matches "iliski". This
+// avoids the "yaşıyorum" → false-match "yas" class of bug seen in prod
+// (Sentry cf8da740, 2026-04-23).
 const TOPIC_SPECIALTY_MAP: Record<string, { userWords: string[]; specialtySubstr: string[] }> = {
-  iliski:    { userWords: ["iliski", "evlilik", "partner", "es ", "esim", "cift", "boşan", "bosan"], specialtySubstr: ["iliskisel"] },
-  kaygi:     { userWords: ["kaygi", "anksiyete", "panik", "fobi", "korku"],                         specialtySubstr: ["kaygi", "anksiyete"] },
-  depresyon: { userWords: ["depresyon", "mutsuz", "umutsuz"],                                       specialtySubstr: ["depresyon"] },
-  travma:    { userWords: ["travma", "taciz", "istismar"],                                          specialtySubstr: ["travmatik", "travma"] },
-  yas:       { userWords: ["yas", "kayip", "ayrilik"],                                              specialtySubstr: ["kayip", "yas"] },
-  ergen:     { userWords: ["ergen", "cocuk", "cocugum", "çocuk"],                                   specialtySubstr: ["ergen", "cocuk", "akran"] },
-  iletisim:  { userWords: ["iletisim", "anlasma"],                                                  specialtySubstr: ["iletisim"] },
-  ofke:      { userWords: ["ofke", "sinir", "saldirgan"],                                           specialtySubstr: ["duygu yonetimi", "ofke"] },
-  yeme:      { userWords: ["yeme", "anoreksi", "bulimi", "beden algisi"],                           specialtySubstr: ["yeme", "beden algisi"] },
+  iliski:    { userWords: ["iliski", "evlilik", "partner", "esim", "cift", "bosanma", "ayrilik"], specialtySubstr: ["iliskisel"] },
+  kaygi:     { userWords: ["kaygi", "anksiyete", "panik", "fobi", "korku"],                       specialtySubstr: ["kaygi", "anksiyete"] },
+  depresyon: { userWords: ["depresyon", "mutsuz", "umutsuz"],                                     specialtySubstr: ["depresyon"] },
+  travma:    { userWords: ["travma", "travmatik", "taciz", "istismar"],                           specialtySubstr: ["travmatik", "travma"] },
+  // "yas" alone would false-match "yaşıyorum". Force explicit grief context.
+  yas:       { userWords: ["yasta", "matem", "kayip", "vefat", "olum", "olen"],                   specialtySubstr: ["kayip", "yas"] },
+  ergen:     { userWords: ["ergen", "cocuk", "cocugum"],                                          specialtySubstr: ["ergen", "cocuk", "akran"] },
+  iletisim:  { userWords: ["iletisim", "iletisemiyorum", "anlasamiyorum"],                        specialtySubstr: ["iletisim"] },
+  ofke:      { userWords: ["ofke", "ofkeli", "sinirli", "saldirgan"],                             specialtySubstr: ["duygu yonetimi", "ofke"] },
+  yeme:      { userWords: ["yeme", "anoreksi", "bulimi", "beden algisi"],                         specialtySubstr: ["yeme", "beden algisi"] },
 };
+
+/**
+ * Word-aware keyword search.
+ *   - Short keywords (< 5 chars): must appear as a whole word.
+ *     "yas" matches "yas tutuyorum" but NOT "yasıyorum" / "yaslı".
+ *   - Longer keywords (>= 5 chars): prefix match allowed.
+ *     "iliski" matches "iliskide", "iliskisel", "iliskim".
+ *
+ * `normalized` is the already-normTR'd message; `keywords` are normalized
+ * lowercase Latin forms.
+ */
+function hasWordOrPrefix(normalized: string, keywords: string[]): boolean {
+  const words = normalized.split(" ").filter(Boolean);
+  return keywords.some((k) => {
+    if (!k) return false;
+    if (k.length < 5) return words.some((w) => w === k);
+    return words.some((w) => w === k || w.startsWith(k));
+  });
+}
 
 function extractUserTopics(userMessage: string): string[] {
   const n = normTR(userMessage);
   const topics: string[] = [];
   for (const [key, { userWords }] of Object.entries(TOPIC_SPECIALTY_MAP)) {
-    if (userWords.some((w) => n.includes(w))) topics.push(key);
+    if (hasWordOrPrefix(n, userWords)) topics.push(key);
   }
   return topics;
 }
