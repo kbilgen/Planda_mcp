@@ -29,7 +29,7 @@ import { getHistory, saveHistory } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
-import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, } from "./guards/hallucinationGuard.js";
+import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, stripPermissionTail, } from "./guards/hallucinationGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 // Sentry must initialize before any other import that might throw
 initSentry();
@@ -232,6 +232,11 @@ async function postProcessResponse(text, userMessage) {
             console.error("[postProcess] injectStructuredMatchBlocks error:", err);
         }
     }
+    // ── Pass 5: Strip forbidden trailing permission questions ────────────────
+    // Prompt explicitly bans "Nasıl istersin?" / "İster misin?" closers, but
+    // the model still emits them. When the response already contains cards,
+    // a trailing permission question slows the user down for no reason — strip.
+    result = stripPermissionTail(result);
     return result;
 }
 async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], intent, userMessage) {

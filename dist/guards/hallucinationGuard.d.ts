@@ -30,6 +30,7 @@ export declare const NO_MATCH_FALLBACK: string;
  */
 export declare const EXPLANATION_FALLBACK: string;
 export declare function detectMetaHallucination(text: string): boolean;
+export declare function stripPermissionTail(text: string): string;
 /**
  * Decides whether a response should be replaced with the safe fallback based
  * on verification output. Logic (intentionally conservative):

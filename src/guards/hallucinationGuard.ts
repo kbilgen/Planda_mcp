@@ -121,6 +121,30 @@ export function detectMetaHallucination(text: string): boolean {
 }
 
 /**
+ * Forbidden "permission question" closers. Prompt explicitly bans these,
+ * but the model still emits them under pressure. When the response has
+ * real recommendations (tag present), we strip a trailing permission
+ * question — it makes the user feel pushed back through a needless gate.
+ *
+ * Matches: "Nasıl istersin?", "İster misin?", "Ayrıca bakmamı ister misin?",
+ *   "Genişletmemi ister misin?", "Devam etmek ister misin?"
+ *
+ * The regex targets ONLY the last sentence; mid-paragraph "istersen"
+ * phrases stay untouched.
+ */
+const PERMISSION_TAIL_PAT =
+  /\n+[^\n]*(?:nasıl\s+istersin|ister\s+misin|ister\s+misiniz|öner(?:memi|eyim\s+mi)|bakmamı\s+ister(?:sin)?)[^\n]*\s*$/i;
+
+export function stripPermissionTail(text: string): string {
+  // Only strip when the response contains real card content — otherwise
+  // a "Nasıl yardımcı olayım?" greeting could lose its question mark.
+  const hasCard =
+    /\*\*[^*\n]+\*\*\s*—/.test(text) || /\[\[expert:[^\]]+\]\]/.test(text);
+  if (!hasCard) return text;
+  return text.replace(PERMISSION_TAIL_PAT, "").trimEnd();
+}
+
+/**
  * Decides whether a response should be replaced with the safe fallback based
  * on verification output. Logic (intentionally conservative):
  *

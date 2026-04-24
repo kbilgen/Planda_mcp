@@ -48,6 +48,7 @@ import {
   extractMismatchedUsernames,
   pruneMismatchedCards,
   injectStructuredMatchBlocks,
+  stripPermissionTail,
 } from "./guards/hallucinationGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 
@@ -285,6 +286,12 @@ async function postProcessResponse(text: string, userMessage?: string): Promise<
       console.error("[postProcess] injectStructuredMatchBlocks error:", err);
     }
   }
+
+  // ── Pass 5: Strip forbidden trailing permission questions ────────────────
+  // Prompt explicitly bans "Nasıl istersin?" / "İster misin?" closers, but
+  // the model still emits them. When the response already contains cards,
+  // a trailing permission question slows the user down for no reason — strip.
+  result = stripPermissionTail(result);
 
   return result;
 }

@@ -14,6 +14,7 @@ import { findTherapists, getTherapist, listSpecialties as apiListSpecialties, ge
 import { CHARACTER_LIMIT } from "../constants.js";
 import { ResponseFormat, } from "../types.js";
 import { applyAiSideFilters } from "../services/therapistFilters.js";
+import { resolveLocation, therapistInDistrict, istanbulSide, matchesIstanbulSide, } from "../services/locationNormalizer.js";
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 const PaginationSchema = z.object({
     page: z
@@ -311,6 +312,18 @@ Returns per therapist:
         },
     }, async (params) => {
         try {
+            // Resolve district / semt input → parent city + district filter.
+            // Turns passing "Göztepe" or "Kartal" into a valid {city:"İstanbul"}
+            // API query plus a post-filter keyword, regardless of whether the
+            // model remembered the prompt's İLÇE KURALI.
+            const resolvedLocation = params.city
+                ? resolveLocation(params.city)
+                : null;
+            const apiCity = resolvedLocation?.city ?? params.city;
+            const districtFilter = resolvedLocation?.district ?? null;
+            const requestedSide = districtFilter
+                ? istanbulSide(districtFilter)
+                : null;
             // When post-filters (online/gender/max_fee/name) are requested, we
             // must fetch a wider slice from the API and narrow in JS afterwards.
             // Bump per_page to capture the full roster (~59 therapists).
@@ -318,12 +331,13 @@ Returns per therapist:
                 params.gender !== undefined ||
                 params.max_fee !== undefined ||
                 params.name !== undefined ||
-                params.specialty_name !== undefined;
+                params.specialty_name !== undefined ||
+                districtFilter !== null;
             const effectivePerPage = hasPostFilter ? Math.max(params.per_page, 200) : params.per_page;
             const raw = await findTherapists({
                 page: params.page,
                 per_page: effectivePerPage,
-                city: params.city,
+                city: apiCity,
                 specialty_id: params.specialty_id,
                 service_id: params.service_id,
             });
@@ -331,14 +345,38 @@ Returns per therapist:
             // Server-side filters — authoritative, executed before any truncation
             // or stripping so the model never sees results that violate its ask.
             if (hasPostFilter) {
-                const filtered = applyAiSideFilters(output.therapists, {
+                let filtered = applyAiSideFilters(output.therapists, {
                     online: params.online,
                     gender: params.gender,
                     max_fee: params.max_fee,
                     name: params.name,
                     specialty_name: params.specialty_name,
-                    city: params.city,
+                    city: apiCity,
                 });
+                // District filter — only keep therapists whose branches[] touch
+                // the requested district. Note: when user requested yüz yüze
+                // (online === false), we require the district match. When user
+                // allowed online or unspecified, we keep online-only therapists
+                // too so we can offer them as a fallback.
+                if (districtFilter) {
+                    if (params.online === false) {
+                        filtered = filtered.filter((t) => therapistInDistrict(t, districtFilter));
+                    }
+                    else {
+                        filtered = filtered.filter((t) => therapistInDistrict(t, districtFilter) ||
+                            (t.branches ?? []).some((b) => b?.type === "online"));
+                    }
+                }
+                // İstanbul side enforcement — if user's district is on one side,
+                // exclude therapists whose ONLY physical branch is on the other
+                // side (online-only is still fine as a fallback).
+                if (requestedSide) {
+                    filtered = filtered.filter((t) => {
+                        const hasOnline = (t.branches ?? []).some((b) => b?.type === "online");
+                        const matchesSide = matchesIstanbulSide(t, requestedSide);
+                        return matchesSide || hasOnline;
+                    });
+                }
                 output = { ...output, therapists: filtered, count: filtered.length };
             }
             // Strip large bio fields before character limit check — prevents truncation of list

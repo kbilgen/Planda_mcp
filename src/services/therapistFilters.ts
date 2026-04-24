@@ -79,22 +79,34 @@ export function filterByFuzzyName(list: Therapist[], query: string): Therapist[]
 
 /**
  * Fuzzy specialty match — returns therapists who have at least one
- * specialty whose name (Turkish-normalized) contains the query.
+ * specialty OR service whose name (Turkish-normalized) contains the query.
  *
- *   filterBySpecialtyName(list, "anksiyete")  → matches "Kaygı(Anksiyete) ve Korku"
- *   filterBySpecialtyName(list, "kaygı")      → same
- *   filterBySpecialtyName(list, "travma")     → matches "Travmatik Deneyim"
- *   filterBySpecialtyName(list, "depresyon")  → matches "Depresyon"
+ * Services are included because Planda's taxonomy is inconsistent: some
+ * therapists have "Çocuk Gelişimi" as a specialty, others only sell
+ * "Çocuk Terapisi" as a service without a matching specialty label.
+ * A user asking for a "çocuk terapisti" expects both groups to surface.
+ *
+ *   filterBySpecialtyName(list, "anksiyete")  → matches specialty "Kaygı(Anksiyete) ve Korku"
+ *   filterBySpecialtyName(list, "çocuk")      → matches specialty "Çocuk Gelişimi" OR service "Çocuk Terapisi"
+ *   filterBySpecialtyName(list, "çift")       → matches specialty "Çift ve Aile" OR service "Çift ve Evlilik Terapisi"
  */
 export function filterBySpecialtyName(list: Therapist[], query: string): Therapist[] {
   const norm = normTR(query);
   if (norm.length < 3) return list;
-  return list.filter((t) =>
-    (t.specialties ?? []).some((s) => {
+  return list.filter((t) => {
+    const specMatch = (t.specialties ?? []).some((s) => {
       const n = normTR(s?.name ?? "");
       return n.length > 0 && n.includes(norm);
-    })
-  );
+    });
+    if (specMatch) return true;
+    // Fallback — some therapists expose the relevant domain only via
+    // services[] (e.g. "Çocuk Terapisi" without a Çocuk specialty tag).
+    const serviceMatch = (t.services ?? []).some((s) => {
+      const n = normTR(s?.name ?? "");
+      return n.length > 0 && n.includes(norm);
+    });
+    return serviceMatch;
+  });
 }
 
 /**

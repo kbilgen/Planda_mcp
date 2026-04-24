@@ -17,7 +17,14 @@ import {
   buildSpecialtyLine,
   buildLocationLine,
   detectMetaHallucination,
+  stripPermissionTail,
 } from "../src/guards/hallucinationGuard.js";
+import {
+  resolveLocation,
+  therapistInDistrict,
+  istanbulSide,
+  matchesIstanbulSide,
+} from "../src/services/locationNormalizer.js";
 import type { Therapist } from "../src/types.js";
 
 test("no violations → keep response", () => {
@@ -342,4 +349,116 @@ test("buildLocationLine online-only therapist", () => {
   };
   const line = buildLocationLine(t);
   assert.equal(line, "Görüşme: Online");
+});
+
+// ─── Fix 1 — District normalization ──────────────────────────────────────────
+
+test("resolveLocation: 'Göztepe' → city=İstanbul, district=goztepe", () => {
+  const r = resolveLocation("Göztepe");
+  assert.equal(r.city, "İstanbul");
+  assert.equal(r.district, "goztepe");
+});
+
+test("resolveLocation: 'Kartal' → city=İstanbul, district=kartal", () => {
+  const r = resolveLocation("Kartal");
+  assert.equal(r.city, "İstanbul");
+  assert.equal(r.district, "kartal");
+});
+
+test("resolveLocation: 'İstanbul' → passes through as city", () => {
+  const r = resolveLocation("İstanbul");
+  assert.equal(r.city, "İstanbul");
+  assert.equal(r.district, null);
+});
+
+test("resolveLocation: unknown city passes through", () => {
+  const r = resolveLocation("Mersin");
+  assert.equal(r.city, "Mersin");
+  assert.equal(r.district, null);
+});
+
+test("therapistInDistrict matches via branch.name", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    branches: [{ id: 10, type: "physical", name: "Göztepe" }],
+  };
+  assert.equal(therapistInDistrict(t, "goztepe"), true);
+  assert.equal(therapistInDistrict(t, "nisantasi"), false);
+});
+
+test("therapistInDistrict matches via branch.address", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    branches: [{
+      id: 10, type: "physical", name: "Merkez",
+      address: "Bağdat Caddesi No:258, Göztepe/Kadıköy"
+    }],
+  };
+  assert.equal(therapistInDistrict(t, "goztepe"), true);
+  assert.equal(therapistInDistrict(t, "kadikoy"), true);
+});
+
+test("istanbulSide: Beşiktaş=avrupa, Göztepe=anadolu", () => {
+  assert.equal(istanbulSide("Beşiktaş"), "avrupa");
+  assert.equal(istanbulSide("besiktas"), "avrupa");
+  assert.equal(istanbulSide("Göztepe"), "anadolu");
+  assert.equal(istanbulSide("Kadıköy"), "anadolu");
+  assert.equal(istanbulSide("İstanbul"), null);
+});
+
+test("matchesIstanbulSide: Göztepe-only therapist vs Avrupa request", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    branches: [{ id: 10, type: "physical", name: "Göztepe" }],
+  };
+  assert.equal(matchesIstanbulSide(t, "anadolu"), true);
+  assert.equal(matchesIstanbulSide(t, "avrupa"), false);
+});
+
+test("matchesIstanbulSide: therapist with both sides matches either", () => {
+  const t: Therapist = {
+    id: 1, name: "T",
+    branches: [
+      { id: 10, type: "physical", name: "Nişantaşı" },
+      { id: 11, type: "physical", name: "Göztepe" },
+    ],
+  };
+  assert.equal(matchesIstanbulSide(t, "avrupa"), true);
+  assert.equal(matchesIstanbulSide(t, "anadolu"), true);
+});
+
+// ─── Fix 3 — stripPermissionTail ─────────────────────────────────────────────
+
+test("stripPermissionTail removes trailing 'Nasıl istersin?' after card", () => {
+  const input =
+    "Anlattıklarına göre 2 isim buldum:\n\n" +
+    "**Ekin Alankuş** — Uzman Psikolog\n" +
+    "[[expert:ekin_alankus]]\n\n" +
+    "Nasıl istersin?";
+  const out = stripPermissionTail(input);
+  assert.doesNotMatch(out, /Nasıl istersin\?/);
+  assert.match(out, /Ekin Alankuş/);
+});
+
+test("stripPermissionTail removes 'Ayrıca önermemi ister misin?'", () => {
+  const input =
+    "**Ekin Alankuş** — Uzman Psikolog\n[[expert:ekin_alankus]]\n\n" +
+    "Ayrıca online seçenekleri de önermemi ister misin?";
+  const out = stripPermissionTail(input);
+  assert.doesNotMatch(out, /ister misin/i);
+});
+
+test("stripPermissionTail leaves greeting question intact (no card)", () => {
+  const input = "Merhaba, sana nasıl yardımcı olayım?";
+  const out = stripPermissionTail(input);
+  assert.equal(out, input);
+});
+
+test("stripPermissionTail keeps mid-sentence 'istersen' untouched", () => {
+  const input =
+    "**Ekin Alankuş** — Uzman Psikolog\n[[expert:ekin_alankus]]\n\n" +
+    "İstersen farklı bir ilçeye bakabilirim.";
+  const out = stripPermissionTail(input);
+  // "İstersen" at start without "ister misin" tail is preserved
+  assert.match(out, /İstersen/);
 });
