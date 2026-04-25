@@ -34,6 +34,7 @@ import {
   istanbulSide,
   matchesIstanbulSide,
 } from "../services/locationNormalizer.js";
+import { filterByApproachVerified } from "../services/approachVerifier.js";
 
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 
@@ -93,6 +94,10 @@ const FilterSchema = z.object({
     .string()
     .optional()
     .describe('Turkish-aware fuzzy match against therapist.specialties[].name. PREFER THIS over calling list_specialties first — the specialty data is inline in every therapist record. Examples: "anksiyete" matches "Kaygı(Anksiyete) ve Korku", "travma" matches "Travmatik Deneyim", "depresyon" matches "Depresyon". Post-filtered server-side.'),
+  approach_name: z
+    .string()
+    .optional()
+    .describe('Therapy approach to verify (e.g. "BDT", "EMDR", "ACT", "DBT", "Şema", "Gestalt", "Psikodinamik", "Mindfulness", "Sistemik"). When set, the server fetches each candidate\'s approaches[] in parallel and ONLY returns therapists whose approaches[] actually contains the requested method. Use this any time the user asks for a specific approach — get_therapist is no longer required from the model side.'),
 });
 
 const FormatSchema = z.object({
@@ -394,6 +399,7 @@ Returns per therapist:
           params.max_fee !== undefined ||
           params.name !== undefined ||
           params.specialty_name !== undefined ||
+          params.approach_name !== undefined ||
           districtFilter !== null;
         const effectivePerPage = hasPostFilter ? Math.max(params.per_page, 200) : params.per_page;
 
@@ -447,6 +453,14 @@ Returns per therapist:
               const matchesSide = matchesIstanbulSide(t, requestedSide);
               return matchesSide || hasOnline;
             });
+          }
+
+          // Approach verification — last because it requires per-candidate
+          // detail-API fetches. Run after every other filter has narrowed
+          // the candidate set so we make as few network calls as possible.
+          // Cache + bounded concurrency live in the verifier module.
+          if (params.approach_name && params.approach_name.trim()) {
+            filtered = await filterByApproachVerified(filtered, params.approach_name);
           }
 
           output = { ...output, therapists: filtered, count: filtered.length };

@@ -212,12 +212,24 @@ Kullanıcı belirli bir terapistin adını soruyorsa:
 3) YAKLAŞIM SORGUSU
 Kullanıcı belirli bir terapi yaklaşımını soruyorsa veya ona göre terapist istiyorsa
 (ör. BDT, EMDR, ACT, DBT, Schema, Gestalt, Psikanaliz, Mindfulness vb.):
-- önce find_therapists ile adayları bul
-- sonra adaylar için get_therapist çağır
-- yalnızca approaches[] içinde istenen yaklaşım kesin olarak bulunan adayları öner
-- approaches[] boş/null ise o adayı yaklaşım bazlı önerme
-- biyografide geçen yaklaşım isimlerini kanıt kabul etme
-- yaklaşım doğrulanmadan öneri yapma
+
+✅ TEK ÇAĞRI YETER: find_therapists'i approach_name parametresiyle çağır.
+   Server her aday için approaches[]'ı kendi doğrular ve sadece eşleşenleri
+   döner. Sen ek olarak get_therapist ÇAĞIRMA, gereksiz.
+
+   Örnekler:
+     "BDT yapan terapist"            → { approach_name: "BDT" }
+     "EMDR uzmanı, İstanbul"          → { city: "İstanbul", approach_name: "EMDR" }
+     "Şema terapisi yapan kadın"      → { gender: "female", approach_name: "Şema" }
+     "ACT yapan online terapist"      → { online: true, approach_name: "ACT" }
+
+❌ Server 0 sonuç dönerse o yaklaşım için terapist YOK demektir — uydurma.
+   Cevap: "Bu yaklaşımla çalışan terapist şu an Planda'da görünmüyor.
+   İstersen [yakın yaklaşımı] yapan birini önerebilirim."
+
+⚠️ approaches[] verisi olmayan terapistler bu listeden ZATEN dışarıda kalır
+   — server onları "doğrulanmamış" sayıp eler. Kullanıcıya yanlışlıkla
+   yaklaşımı olmayan biri önerilemez.
 
 4) MÜSAİTLİK SORGUSU — ZORUNLU AKIŞ
 
