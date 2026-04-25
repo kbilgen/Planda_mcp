@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Planda Eval Review</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --surface: #1a1d24;
+    --surface-2: #232732;
+    --border: #2c3140;
+    --text: #e8eaf0;
+    --text-dim: #8a92a6;
+    --accent: #8fc580;
+    --good: #4caf50;
+    --ok: #80c4f5;
+    --mid: #f5b840;
+    --bad: #e87162;
+    --code: #c5cae9;
+    --shadow: 0 1px 3px rgba(0,0,0,.3);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+  }
+  .topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .topbar h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--accent);
+    letter-spacing: 0.3px;
+  }
+  .topbar label {
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .topbar input[type="file"] {
+    font-size: 12px;
+    color: var(--text);
+    max-width: 220px;
+  }
+  .topbar .stats {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    gap: 14px;
+  }
+  .topbar .stats span strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+    background: var(--surface-2);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .toggle input { cursor: pointer; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: calc(100vh - 50px);
+  }
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+  }
+  .sidebar-empty {
+    padding: 20px;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .case-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .case-item:hover { background: var(--surface-2); }
+  .case-item.active {
+    background: var(--surface-2);
+    border-left: 3px solid var(--accent);
+    padding-left: 13px;
+  }
+  .case-item .id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text);
+    font-size: 12px;
+  }
+  .case-item .meta {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .badge.pass { background: rgba(76,175,80,.18); color: #79d57c; }
+  .badge.fail { background: rgba(232,113,98,.18); color: #ec9387; }
+  .badge.judge { background: rgba(128,196,245,.18); color: #9ed1f5; }
+  .badge.disagree { background: rgba(245,184,64,.18); color: #fac972; }
+  .badge.reviewed { background: rgba(143,197,128,.18); color: var(--accent); }
+  .badge.suspicious { background: rgba(232,113,98,.12); color: #f0a89e; }
+
+  .main {
+    overflow-y: auto;
+    padding: 24px 32px;
+    max-width: 980px;
+  }
+  .empty-state {
+    padding: 60px 0;
+    text-align: center;
+    color: var(--text-dim);
+  }
+  .empty-state h2 { font-weight: 500; color: var(--text); }
+  .empty-state ol { text-align: left; max-width: 460px; margin: 16px auto; line-height: 1.7; }
+  .empty-state code {
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  .case-header { margin-bottom: 24px; }
+  .case-header h2 {
+    margin: 0 0 6px 0;
+    font-size: 18px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .case-header .breadcrumb {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+
+  .section { margin-bottom: 22px; }
+  .section h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin: 0 0 8px 0;
+    font-weight: 600;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .panel.user { border-left: 3px solid #6c8eef; }
+  .panel.bot { border-left: 3px solid var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .panel.expected { border-left: 3px solid #b58cf5; font-size: 13px; }
+  .panel.expected .field { display: flex; gap: 8px; margin-bottom: 4px; }
+  .panel.expected .field .label { color: var(--text-dim); min-width: 120px; font-size: 12px; }
+  .panel.expected .field code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--surface-2);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--code);
+  }
+
+  .checks { display: flex; flex-direction: column; gap: 4px; }
+  .check {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .check .icon { font-weight: 600; }
+  .check.pass .icon { color: var(--good); }
+  .check.fail .icon { color: var(--bad); }
+  .check .text { color: var(--text-dim); }
+  .check .text strong { color: var(--text); font-weight: 500; }
+
+  .judge {
+    background: var(--surface-2);
+    border-radius: 6px;
+    padding: 12px 14px;
+    border-left: 3px solid #80c4f5;
+    font-size: 13px;
+  }
+  .judge .score { font-size: 18px; font-weight: 700; margin-right: 8px; color: #9ed1f5; }
+  .judge .rationale { color: var(--text-dim); margin-top: 4px; line-height: 1.5; }
+
+  .decision-bar {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 14px 0;
+    margin-top: 30px;
+  }
+  .decision-buttons {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .dbtn {
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .dbtn:hover { transform: translateY(-1px); }
+  .dbtn[data-decision="excellent"]:hover, .dbtn[data-decision="excellent"].active { background: var(--good); border-color: var(--good); color: #fff; }
+  .dbtn[data-decision="good"]:hover,      .dbtn[data-decision="good"].active      { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .dbtn[data-decision="mid"]:hover,       .dbtn[data-decision="mid"].active       { background: var(--mid); border-color: var(--mid); color: #1a1d24; }
+  .dbtn[data-decision="bad"]:hover,       .dbtn[data-decision="bad"].active       { background: var(--bad); border-color: var(--bad); color: #fff; }
+
+  textarea {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 60px;
+  }
+  textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+  .nav {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 12px;
+  }
+  .nav button {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .nav button:hover:not(:disabled) { background: var(--border); }
+
+  .export-bar {
+    background: var(--surface);
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .export-bar button {
+    background: var(--accent);
+    color: #1a1d24;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .export-bar button.secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-weight: 500;
+  }
+  .export-bar button:hover { filter: brightness(1.1); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Planda Eval Review</h1>
+  <label>
+    Eval rapor (JSON)
+    <input type="file" id="report-input" accept=".json" />
+  </label>
+  <label>
+    Dataset (JSONL)
+    <input type="file" id="dataset-input" accept=".jsonl,.json" />
+  </label>
+  <label class="toggle">
+    <input type="checkbox" id="suspicious-only" />
+    Sadece şüpheliler
+  </label>
+  <div class="stats" id="stats"></div>
+</div>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-empty">İlk olarak yukarıdan bir <strong>eval rapor JSON</strong>'unu seç. Ek olarak <code>dataset.jsonl</code>'i de yüklersen beklenen davranışlar görünür.</div>
+  </aside>
+  <main class="main" id="main">
+    <div class="empty-state">
+      <h2>Henüz veri yok</h2>
+      <ol>
+        <li>Önce eval'i koştur: <code>npm run eval:judge</code></li>
+        <li>Rapor şuraya düşer: <code>evals/reports/&lt;timestamp&gt;.json</code></li>
+        <li>Yukarıdan o JSON'u seç</li>
+        <li>Şüpheli senaryoları okuyup "Mükemmel / İyi / Orta / Kötü" seç</li>
+        <li>Bitince "Dışa Aktar" ile kararlarını indir</li>
+      </ol>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+// ─── Storage helpers ────────────────────────────────────────────────────────
+const LS_KEY = "planda_review_decisions_v1";
+function loadDecisions() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); }
+  catch { return {}; }
+}
+function saveDecisions(d) {
+  localStorage.setItem(LS_KEY, JSON.stringify(d));
+}
+
+// ─── App state ──────────────────────────────────────────────────────────────
+const state = {
+  report: null,         // EvalReport
+  dataset: {},          // id → TestCase
+  decisions: loadDecisions(),  // id → { decision, note, ts }
+  currentId: null,
+  showSuspiciousOnly: false,
+};
+
+// ─── Heuristic: which cases are "suspicious" ───────────────────────────────
+function isSuspicious(c) {
+  if (!c.passed) return true;                                    // assertion failed
+  if (typeof c.judgeScore === "number" && c.judgeScore <= 3) return true;
+  // Disagreement: assertions passed but judge says low
+  if (c.passed && typeof c.judgeScore === "number" && c.judgeScore < 4) return true;
+  return false;
+}
+
+function suspicionReason(c) {
+  if (!c.passed) return "assertion fail";
+  if (typeof c.judgeScore === "number" && c.judgeScore <= 3) return `judge ${c.judgeScore}/5`;
+  return null;
+}
+
+// ─── File loaders ───────────────────────────────────────────────────────────
+document.getElementById("report-input").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const txt = await f.text();
+  try {
+    state.report = JSON.parse(txt);
+    if (!state.report.cases) throw new Error("not an eval report (no .cases array)");
+    render();
+  } catch (err) {
+    alert("Rapor parse hatası: " + err.message);
+  }
+});
+
+document.getElementById("dataset-input").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const txt = await f.text();
+  state.dataset = {};
+  for (const line of txt.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("//")) continue;
+    try {
+      const tc = JSON.parse(t);
+      if (tc.id) state.dataset[tc.id] = tc;
+    } catch {}
+  }
+  render();
+});
+
+document.getElementById("suspicious-only").addEventListener("change", (e) => {
+  state.showSuspiciousOnly = e.target.checked;
+  render();
+});
+
+// ─── Rendering ──────────────────────────────────────────────────────────────
+function render() {
+  if (!state.report) return;
+  renderStats();
+  renderSidebar();
+  renderMain();
+}
+
+function renderStats() {
+  const r = state.report;
+  const reviewedCount = Object.keys(state.decisions).filter(id =>
+    r.cases.some(c => c.id === id)
+  ).length;
+  const suspiciousCount = r.cases.filter(isSuspicious).length;
+  document.getElementById("stats").innerHTML = `
+    <span>Toplam: <strong>${r.totalCases}</strong></span>
+    <span>Geçti: <strong style="color:var(--good)">${r.passed}</strong></span>
+    <span>Kaldı: <strong style="color:var(--bad)">${r.failed}</strong></span>
+    <span>Şüpheli: <strong style="color:var(--mid)">${suspiciousCount}</strong></span>
+    <span>İncelenen: <strong>${reviewedCount}</strong></span>
+  `;
+}
+
+function renderSidebar() {
+  const sb = document.getElementById("sidebar");
+  let cases = state.report.cases;
+  if (state.showSuspiciousOnly) cases = cases.filter(isSuspicious);
+  if (cases.length === 0) {
+    sb.innerHTML = `<div class="sidebar-empty">Liste boş.</div>`;
+    return;
+  }
+  sb.innerHTML = cases.map(c => {
+    const reviewed = state.decisions[c.id];
+    const susp = isSuspicious(c);
+    const reason = suspicionReason(c);
+    const badges = [];
+    if (c.passed) badges.push(`<span class="badge pass">PASS</span>`);
+    else          badges.push(`<span class="badge fail">FAIL</span>`);
+    if (typeof c.judgeScore === "number") badges.push(`<span class="badge judge">J${c.judgeScore}</span>`);
+    if (susp && c.passed && typeof c.judgeScore === "number" && c.judgeScore <= 3) {
+      badges.push(`<span class="badge disagree">!</span>`);
+    }
+    if (reviewed) badges.push(`<span class="badge reviewed">✓</span>`);
+    return `
+      <div class="case-item ${state.currentId === c.id ? "active" : ""}" data-id="${c.id}">
+        <div class="id">${c.id}</div>
+        <div class="meta">
+          ${badges.join(" ")}
+          ${reason ? `<span style="margin-left:auto">${reason}</span>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+  sb.querySelectorAll(".case-item").forEach(el => {
+    el.addEventListener("click", () => {
+      state.currentId = el.dataset.id;
+      render();
+    });
+  });
+  // Auto-select first if none selected
+  if (!state.currentId && cases.length > 0) {
+    state.currentId = cases[0].id;
+    setTimeout(render, 0);
+  }
+}
+
+function renderMain() {
+  const main = document.getElementById("main");
+  if (!state.currentId) {
+    main.innerHTML = `<div class="empty-state"><h2>Soldan bir senaryo seç.</h2></div>`;
+    return;
+  }
+  const c = state.report.cases.find(x => x.id === state.currentId);
+  if (!c) {
+    main.innerHTML = `<div class="empty-state">Seçili senaryo bulunamadı.</div>`;
+    return;
+  }
+  const tc = state.dataset[c.id];
+  const decision = state.decisions[c.id] || {};
+
+  const expected = tc ? renderExpected(tc) : "";
+  const historyBlock = (tc && tc.history && tc.history.length) ? `
+    <div class="section">
+      <h3>Geçmiş Konuşma</h3>
+      <div class="panel">${escapeHtml(tc.history.map(h => `[${h.role}] ${h.content}`).join("\n"))}</div>
+    </div>
+  ` : "";
+
+  const judgeBlock = (typeof c.judgeScore === "number") ? `
+    <div class="section">
+      <h3>LLM Hakem</h3>
+      <div class="judge">
+        <span class="score">${c.judgeScore}/5</span>
+        ${c.judgeRationale ? `<div class="rationale">${escapeHtml(c.judgeRationale)}</div>` : ""}
+      </div>
+    </div>
+  ` : "";
+
+  main.innerHTML = `
+    <div class="case-header">
+      <h2>${c.id}</h2>
+      <div class="breadcrumb">${c.category} · intent=${c.detectedIntent} · ${c.latencyMs}ms · tools=[${c.toolCalls.join(", ") || "—"}]</div>
+    </div>
+
+    <div class="section">
+      <h3>Kullanıcı Mesajı</h3>
+      <div class="panel user">${escapeHtml(c.input)}</div>
+    </div>
+
+    ${historyBlock}
+    ${expected}
+
+    <div class="section">
+      <h3>Bot Cevabı</h3>
+      <div class="panel bot">${escapeHtml(c.response) || "<em>(boş)</em>"}</div>
+    </div>
+
+    <div class="section">
+      <h3>Otomatik Kontroller</h3>
+      <div class="checks">
+        ${c.assertions.map(a => `
+          <div class="check ${a.passed ? "pass" : "fail"}">
+            <span class="icon">${a.passed ? "✓" : "✗"}</span>
+            <span class="text"><strong>${escapeHtml(a.name)}</strong>${a.detail ? " — " + escapeHtml(a.detail) : ""}</span>
+          </div>
+        `).join("") || "<em>Kontrol yok</em>"}
+      </div>
+    </div>
+
+    ${judgeBlock}
+
+    <div class="decision-bar">
+      <h3 style="margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim);">Kararın</h3>
+      <div class="decision-buttons">
+        <button class="dbtn ${decision.decision === "excellent" ? "active" : ""}" data-decision="excellent">Mükemmel</button>
+        <button class="dbtn ${decision.decision === "good" ? "active" : ""}"      data-decision="good">İyi</button>
+        <button class="dbtn ${decision.decision === "mid" ? "active" : ""}"       data-decision="mid">Orta</button>
+        <button class="dbtn ${decision.decision === "bad" ? "active" : ""}"       data-decision="bad">Kötü</button>
+      </div>
+      <textarea id="note-input" placeholder="Notun (opsiyonel) — neden böyle değerlendirdin? Ne düzeltilmeli?">${escapeHtml(decision.note || "")}</textarea>
+      <div class="nav">
+        <button id="prev-btn">← Önceki</button>
+        <button id="next-btn">Sonraki →</button>
+      </div>
+    </div>
+
+    <div class="export-bar">
+      <button id="export-decisions">Kararları İndir (JSON)</button>
+      <button id="export-regression" class="secondary">Kötü/Orta → dataset_additions.jsonl</button>
+      <button id="export-good" class="secondary">Mükemmel/İyi → good_examples.jsonl</button>
+      <button id="clear-btn" class="secondary" style="margin-left:auto;background:rgba(232,113,98,.18);color:#f0a89e">Tüm kararları sıfırla</button>
+    </div>
+  `;
+
+  // Wire up decision buttons
+  main.querySelectorAll(".dbtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const d = state.decisions[c.id] || {};
+      d.decision = btn.dataset.decision;
+      d.ts = new Date().toISOString();
+      const noteEl = document.getElementById("note-input");
+      d.note = noteEl ? noteEl.value : "";
+      state.decisions[c.id] = d;
+      saveDecisions(state.decisions);
+      render();
+    });
+  });
+
+  // Auto-save note on blur
+  const noteEl = document.getElementById("note-input");
+  if (noteEl) {
+    noteEl.addEventListener("blur", () => {
+      if (!state.decisions[c.id]) state.decisions[c.id] = {};
+      state.decisions[c.id].note = noteEl.value;
+      state.decisions[c.id].ts = new Date().toISOString();
+      saveDecisions(state.decisions);
+    });
+  }
+
+  // Navigation
+  const visibleCases = state.showSuspiciousOnly
+    ? state.report.cases.filter(isSuspicious)
+    : state.report.cases;
+  const idx = visibleCases.findIndex(x => x.id === c.id);
+  const prevBtn = document.getElementById("prev-btn");
+  const nextBtn = document.getElementById("next-btn");
+  if (prevBtn) {
+    prevBtn.disabled = idx <= 0;
+    prevBtn.onclick = () => { state.currentId = visibleCases[idx - 1].id; render(); };
+  }
+  if (nextBtn) {
+    nextBtn.disabled = idx >= visibleCases.length - 1;
+    nextBtn.onclick = () => { state.currentId = visibleCases[idx + 1].id; render(); };
+  }
+
+  // Export buttons
+  document.getElementById("export-decisions").onclick = exportDecisions;
+  document.getElementById("export-regression").onclick = exportRegression;
+  document.getElementById("export-good").onclick = exportGood;
+  document.getElementById("clear-btn").onclick = () => {
+    if (confirm("Tüm kararlar silinecek. Emin misin?")) {
+      state.decisions = {};
+      saveDecisions(state.decisions);
+      render();
+    }
+  };
+}
+
+function renderExpected(tc) {
+  const fields = [];
+  if (tc.notes) fields.push(`<div class="field"><span class="label">Açıklama</span><span>${escapeHtml(tc.notes)}</span></div>`);
+  if (tc.expected_intent) fields.push(`<div class="field"><span class="label">Beklenen intent</span><code>${escapeHtml(tc.expected_intent)}</code></div>`);
+  if (tc.expected_tools) fields.push(`<div class="field"><span class="label">Beklenen tool</span><code>${escapeHtml(JSON.stringify(tc.expected_tools))}</code></div>`);
+  if (tc.must_contain) fields.push(`<div class="field"><span class="label">İçermeli (hepsi)</span><code>${escapeHtml(JSON.stringify(tc.must_contain))}</code></div>`);
+  if (tc.must_contain_any) fields.push(`<div class="field"><span class="label">İçermeli (en az 1)</span><code>${escapeHtml(JSON.stringify(tc.must_contain_any))}</code></div>`);
+  if (tc.must_not_contain) fields.push(`<div class="field"><span class="label">İçermemeli</span><code>${escapeHtml(JSON.stringify(tc.must_not_contain))}</code></div>`);
+  if (tc.must_contain_tag) fields.push(`<div class="field"><span class="label">Tag</span><code>[[expert:...]] zorunlu</code></div>`);
+  if (fields.length === 0) return "";
+  return `
+    <div class="section">
+      <h3>Beklenen Davranış</h3>
+      <div class="panel expected">${fields.join("")}</div>
+    </div>
+  `;
+}
+
+// ─── Exports ────────────────────────────────────────────────────────────────
+function exportDecisions() {
+  const out = {
+    ts: new Date().toISOString(),
+    report_ts: state.report?.ts || null,
+    decisions: state.decisions,
+    summary: {
+      excellent: Object.values(state.decisions).filter(d => d.decision === "excellent").length,
+      good:      Object.values(state.decisions).filter(d => d.decision === "good").length,
+      mid:       Object.values(state.decisions).filter(d => d.decision === "mid").length,
+      bad:       Object.values(state.decisions).filter(d => d.decision === "bad").length,
+    },
+  };
+  download(`review-decisions-${stamp()}.json`, JSON.stringify(out, null, 2));
+}
+
+function exportRegression() {
+  // For each Kötü/Orta decision, build a regression scenario
+  const lines = [];
+  for (const [id, d] of Object.entries(state.decisions)) {
+    if (d.decision !== "bad" && d.decision !== "mid") continue;
+    const c = state.report.cases.find(x => x.id === id);
+    if (!c) continue;
+    const tc = state.dataset[id] || {};
+    const scenario = {
+      id: `regression-${id}`,
+      category: c.category,
+      input: c.input,
+      ...(tc.history ? { history: tc.history } : {}),
+      expected_intent: c.detectedIntent,
+      ...(tc.expected_tools ? { expected_tools: tc.expected_tools } : {}),
+      must_not_contain: extractForbiddenSubstrings(c.response, d.note || ""),
+      notes: `Auto-generated from human review. Reason: ${d.note || "(no note)"} (decision: ${d.decision})`,
+    };
+    lines.push(JSON.stringify(scenario));
+  }
+  if (lines.length === 0) {
+    alert("Regression senaryosu üretmek için en az 1 'Kötü' veya 'Orta' kararı gerekli.");
+    return;
+  }
+  download(`regression-additions-${stamp()}.jsonl`, lines.join("\n"));
+}
+
+function exportGood() {
+  // Few-shot pool — Mükemmel/İyi olanları
+  const items = [];
+  for (const [id, d] of Object.entries(state.decisions)) {
+    if (d.decision !== "excellent" && d.decision !== "good") continue;
+    const c = state.report.cases.find(x => x.id === id);
+    if (!c) continue;
+    const tc = state.dataset[id] || {};
+    items.push({
+      id,
+      category: c.category,
+      input: c.input,
+      history: tc.history || [],
+      response: c.response,
+      tools_used: c.toolCalls,
+      review_decision: d.decision,
+      review_note: d.note || "",
+      review_ts: d.ts,
+    });
+  }
+  if (items.length === 0) {
+    alert("Few-shot havuzu için en az 1 'Mükemmel' veya 'İyi' kararı gerekli.");
+    return;
+  }
+  download(`good-examples-${stamp()}.jsonl`, items.map(i => JSON.stringify(i)).join("\n"));
+}
+
+// Heuristic — pull forbidden substrings from response based on the user's note.
+// If note mentions specific phrases in quotes, use those. Otherwise fall back to
+// commonly-banned closers.
+function extractForbiddenSubstrings(response, note) {
+  const forbidden = new Set();
+  // Quoted phrases in note → forbidden
+  const quoted = note.match(/"([^"]{2,40})"/g);
+  if (quoted) for (const q of quoted) forbidden.add(q.replace(/"/g, ""));
+  // Common patterns
+  const patterns = ["nasıl istersin", "ister misin", "genişletmemi", "approaches[]", "veritabanı"];
+  for (const p of patterns) {
+    if (response.toLowerCase().includes(p.toLowerCase())) forbidden.add(p);
+  }
+  return [...forbidden];
+}
+
+function stamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+}
+
+function download(name, content) {
+  const blob = new Blob([content], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 200);
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Keyboard shortcuts
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
+  if (!state.currentId) return;
+  if (e.key === "1") clickDecision("excellent");
+  else if (e.key === "2") clickDecision("good");
+  else if (e.key === "3") clickDecision("mid");
+  else if (e.key === "4") clickDecision("bad");
+  else if (e.key === "j" || e.key === "ArrowDown") { document.getElementById("next-btn")?.click(); }
+  else if (e.key === "k" || e.key === "ArrowUp")   { document.getElementById("prev-btn")?.click(); }
+});
+function clickDecision(d) {
+  document.querySelector(`.dbtn[data-decision="${d}"]`)?.click();
+}
+</script>
+
+</body>
+</html>

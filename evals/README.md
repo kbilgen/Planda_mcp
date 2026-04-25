@@ -39,6 +39,35 @@ npm run eval -- --filter availability
 3. `tsx evals/run.ts --filter <id>` ile tek case'i çalıştır, geçtiğini doğrula.
 4. Commit.
 
+## İnsan Review (`review.html`)
+
+LLM judge'a ek olarak proje sahibi rapordaki cevapları gözden geçirip
+kendi kararını verebilir. Akış:
+
+```bash
+# 1. Eval'i koş (judge ile)
+npm run eval -- --judge
+
+# 2. review.html'i tarayıcıda aç (dosyayı çift tıkla veya basit bir
+#    static server kullan)
+cd evals && python3 -m http.server 8080
+# → http://localhost:8080/review.html
+```
+
+UI'da:
+1. **Eval rapor (JSON)** alanından az önce üretilen `reports/<ts>.json`'u seç
+2. **Dataset (JSONL)** alanından `dataset.jsonl`'i seç (beklenen davranış görünsün)
+3. **Sadece şüpheliler** kutusunu işaretle — judge skoru ≤3 ya da assertion fail olanlar
+4. Her senaryo için **Mükemmel / İyi / Orta / Kötü** seç + opsiyonel not yaz
+5. Bitirince **Dışa aktar**:
+   - `review-decisions-*.json` — tüm kararların kaydı
+   - `regression-additions-*.jsonl` — Kötü/Orta kararlar otomatik regression senaryosuna dönüşür, `dataset.jsonl`'in sonuna kopyalayabilirsin
+   - `good-examples-*.jsonl` — Mükemmel/İyi olanlar few-shot havuzuna eklenebilir
+
+Kararlar tarayıcı `localStorage`'ında saklanır — sayfayı kapatırsan
+kaybolmaz. Klavye kısayolları: `1`/`2`/`3`/`4` karar, `j`/`k` veya
+ok tuşları senaryo değiştir.
+
 ## CI
 
 Her PR'de çalıştırmak için:
