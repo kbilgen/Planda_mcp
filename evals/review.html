@@ -327,11 +327,16 @@
 
 <div class="topbar">
   <h1>Planda Eval Review</h1>
-  <label>
+  <span id="reviewer-tag" style="font-size:13px;color:var(--text-dim)"></span>
+  <label id="report-picker-wrap" style="display:none">
+    Rapor:
+    <select id="report-picker"></select>
+  </label>
+  <label id="local-mode-wrap" style="display:none">
     Eval rapor (JSON)
     <input type="file" id="report-input" accept=".json" />
   </label>
-  <label>
+  <label id="local-dataset-wrap" style="display:none">
     Dataset (JSONL)
     <input type="file" id="dataset-input" accept=".jsonl,.json" />
   </label>
@@ -363,21 +368,32 @@
 <script>
 "use strict";
 
-// ─── Storage helpers ────────────────────────────────────────────────────────
+// ─── Mode detection ─────────────────────────────────────────────────────────
+// When loaded over HTTP from the server (/review), use the server API for
+// reports + decisions. When opened as a local file (file://), fall back to
+// manual JSON file inputs and localStorage. Both paths produce the same UX.
+const SERVER_MODE = location.protocol === "http:" || location.protocol === "https:";
+const API_BASE = "/review/api";
+
+// ─── Local-mode storage (file:// fallback) ──────────────────────────────────
 const LS_KEY = "planda_review_decisions_v1";
-function loadDecisions() {
+function loadLocalDecisions() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); }
   catch { return {}; }
 }
-function saveDecisions(d) {
+function saveLocalDecisions(d) {
   localStorage.setItem(LS_KEY, JSON.stringify(d));
 }
 
 // ─── App state ──────────────────────────────────────────────────────────────
 const state = {
-  report: null,         // EvalReport
-  dataset: {},          // id → TestCase
-  decisions: loadDecisions(),  // id → { decision, note, ts }
+  report: null,            // EvalReport
+  reportFilename: null,    // filename on server (server mode only)
+  dataset: {},             // id → TestCase
+  // Server mode: decisions[id] = { mine: {...}, all: [{reviewer, decision, note, ts}, ...] }
+  // Local mode:  decisions[id] = { decision, note, ts }
+  decisions: SERVER_MODE ? {} : loadLocalDecisions(),
+  reviewer: null,          // server mode: current user
   currentId: null,
   showSuspiciousOnly: false,
 };
@@ -397,24 +413,39 @@ function suspicionReason(c) {
   return null;
 }
 
-// ─── File loaders ───────────────────────────────────────────────────────────
-document.getElementById("report-input").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  const txt = await f.text();
-  try {
-    state.report = JSON.parse(txt);
-    if (!state.report.cases) throw new Error("not an eval report (no .cases array)");
+// ─── File loaders (LOCAL MODE) ──────────────────────────────────────────────
+const reportInputEl = document.getElementById("report-input");
+const datasetInputEl = document.getElementById("dataset-input");
+if (reportInputEl) {
+  reportInputEl.addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const txt = await f.text();
+    try {
+      state.report = JSON.parse(txt);
+      if (!state.report.cases) throw new Error("not an eval report (no .cases array)");
+      render();
+    } catch (err) {
+      alert("Rapor parse hatası: " + err.message);
+    }
+  });
+}
+if (datasetInputEl) {
+  datasetInputEl.addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const txt = await f.text();
+    parseDatasetText(txt);
     render();
-  } catch (err) {
-    alert("Rapor parse hatası: " + err.message);
-  }
+  });
+}
+
+document.getElementById("suspicious-only").addEventListener("change", (e) => {
+  state.showSuspiciousOnly = e.target.checked;
+  render();
 });
 
-document.getElementById("dataset-input").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  const txt = await f.text();
+function parseDatasetText(txt) {
   state.dataset = {};
   for (const line of txt.split("\n")) {
     const t = line.trim();
@@ -424,13 +455,90 @@ document.getElementById("dataset-input").addEventListener("change", async (e) =>
       if (tc.id) state.dataset[tc.id] = tc;
     } catch {}
   }
-  render();
-});
+}
 
-document.getElementById("suspicious-only").addEventListener("change", (e) => {
-  state.showSuspiciousOnly = e.target.checked;
+// ─── Server mode bootstrapping ──────────────────────────────────────────────
+async function bootstrapServerMode() {
+  try {
+    // Identify reviewer
+    const me = await fetch(`${API_BASE}/whoami`).then(r => r.json());
+    state.reviewer = me.reviewer;
+    document.getElementById("reviewer-tag").textContent = `İnceleyen: ${state.reviewer}`;
+
+    // Show server-mode UI
+    document.getElementById("report-picker-wrap").style.display = "";
+    document.getElementById("local-mode-wrap").style.display = "none";
+    document.getElementById("local-dataset-wrap").style.display = "none";
+
+    // Load dataset (auto from server)
+    const dsTxt = await fetch(`${API_BASE}/dataset`).then(r => r.text());
+    parseDatasetText(dsTxt);
+
+    // Populate report picker
+    const { reports } = await fetch(`${API_BASE}/reports`).then(r => r.json());
+    if (!reports || reports.length === 0) {
+      document.getElementById("main").innerHTML = `
+        <div class="empty-state">
+          <h2>Henüz rapor yok</h2>
+          <p>Lokal'de eval'i koşturup raporu sunucuya yükle:</p>
+          <p><code>npm run eval:upload</code></p>
+          <p style="font-size:12px;color:var(--text-dim);margin-top:20px">
+            Ya da CLI ile: <code>curl -u USER:PASS -X POST -H 'Content-Type: application/json'<br>
+            --data @evals/reports/&lt;ts&gt;.json https://&lt;host&gt;/review/api/reports</code>
+          </p>
+        </div>
+      `;
+      return;
+    }
+    const picker = document.getElementById("report-picker");
+    picker.innerHTML = reports.map(r =>
+      `<option value="${escapeHtml(r.filename)}">${escapeHtml(r.ts)} (${r.totalCases ?? "?"} senaryo, pass=${r.passed ?? "?"})</option>`
+    ).join("");
+    picker.addEventListener("change", () => loadServerReport(picker.value));
+    await loadServerReport(reports[0].filename);
+  } catch (err) {
+    alert("Sunucu modu başlatılamadı: " + err.message);
+  }
+}
+
+async function loadServerReport(filename) {
+  state.reportFilename = filename;
+  state.currentId = null;
+  state.report = await fetch(`${API_BASE}/reports/${encodeURIComponent(filename)}`).then(r => r.json());
+
+  // Pull team decisions for this report
+  const { decisions } = await fetch(`${API_BASE}/decisions/${encodeURIComponent(filename)}`).then(r => r.json());
+  state.decisions = {};
+  for (const d of decisions || []) {
+    if (!state.decisions[d.scenarioId]) state.decisions[d.scenarioId] = { all: [], mine: null };
+    state.decisions[d.scenarioId].all.push(d);
+    if (d.reviewer === state.reviewer) state.decisions[d.scenarioId].mine = d;
+  }
   render();
-});
+}
+
+async function postDecisionToServer(scenarioId, decision, note) {
+  const body = {
+    reportFilename: state.reportFilename,
+    scenarioId,
+    decision,
+    note: note || "",
+  };
+  const r = await fetch(`${API_BASE}/decisions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`POST failed: ${r.status}`);
+  const { decision: saved } = await r.json();
+  // Update local cache
+  if (!state.decisions[scenarioId]) state.decisions[scenarioId] = { all: [], mine: null };
+  // Replace mine + push into all
+  const ix = state.decisions[scenarioId].all.findIndex(d => d.reviewer === state.reviewer);
+  if (ix >= 0) state.decisions[scenarioId].all[ix] = saved;
+  else state.decisions[scenarioId].all.push(saved);
+  state.decisions[scenarioId].mine = saved;
+}
 
 // ─── Rendering ──────────────────────────────────────────────────────────────
 function render() {
@@ -440,18 +548,27 @@ function render() {
   renderMain();
 }
 
+function getMyDecision(id) {
+  if (SERVER_MODE) return state.decisions[id]?.mine || null;
+  return state.decisions[id] || null;
+}
+function getAllTeamDecisions(id) {
+  if (SERVER_MODE) return state.decisions[id]?.all || [];
+  // Local mode: only my decision exists
+  const d = state.decisions[id];
+  return d ? [{ ...d, reviewer: "you" }] : [];
+}
+
 function renderStats() {
   const r = state.report;
-  const reviewedCount = Object.keys(state.decisions).filter(id =>
-    r.cases.some(c => c.id === id)
-  ).length;
+  const reviewedCount = r.cases.filter(c => getMyDecision(c.id)).length;
   const suspiciousCount = r.cases.filter(isSuspicious).length;
   document.getElementById("stats").innerHTML = `
     <span>Toplam: <strong>${r.totalCases}</strong></span>
     <span>Geçti: <strong style="color:var(--good)">${r.passed}</strong></span>
     <span>Kaldı: <strong style="color:var(--bad)">${r.failed}</strong></span>
     <span>Şüpheli: <strong style="color:var(--mid)">${suspiciousCount}</strong></span>
-    <span>İncelenen: <strong>${reviewedCount}</strong></span>
+    <span>İncelediğin: <strong>${reviewedCount}</strong></span>
   `;
 }
 
@@ -464,7 +581,8 @@ function renderSidebar() {
     return;
   }
   sb.innerHTML = cases.map(c => {
-    const reviewed = state.decisions[c.id];
+    const myDecision = getMyDecision(c.id);
+    const teamCount = getAllTeamDecisions(c.id).length;
     const susp = isSuspicious(c);
     const reason = suspicionReason(c);
     const badges = [];
@@ -474,7 +592,8 @@ function renderSidebar() {
     if (susp && c.passed && typeof c.judgeScore === "number" && c.judgeScore <= 3) {
       badges.push(`<span class="badge disagree">!</span>`);
     }
-    if (reviewed) badges.push(`<span class="badge reviewed">✓</span>`);
+    if (myDecision) badges.push(`<span class="badge reviewed">✓</span>`);
+    if (SERVER_MODE && teamCount > 1) badges.push(`<span class="badge judge">${teamCount}👥</span>`);
     return `
       <div class="case-item ${state.currentId === c.id ? "active" : ""}" data-id="${c.id}">
         <div class="id">${c.id}</div>
@@ -510,9 +629,25 @@ function renderMain() {
     return;
   }
   const tc = state.dataset[c.id];
-  const decision = state.decisions[c.id] || {};
+  const decision = getMyDecision(c.id) || {};
+  const teamDecisions = getAllTeamDecisions(c.id);
+  const otherDecisions = teamDecisions.filter(d => d.reviewer !== state.reviewer && d.reviewer !== "you");
 
   const expected = tc ? renderExpected(tc) : "";
+
+  const teamBlock = (SERVER_MODE && otherDecisions.length > 0) ? `
+    <div class="section">
+      <h3>Takım Kararları</h3>
+      <div class="panel" style="font-size:13px;line-height:1.7">
+        ${otherDecisions.map(d => `
+          <div><strong style="color:var(--text)">${escapeHtml(d.reviewer)}</strong>:
+            <span style="color:${decisionColor(d.decision)}">${decisionLabel(d.decision)}</span>
+            ${d.note ? `<span style="color:var(--text-dim)"> — "${escapeHtml(d.note)}"</span>` : ""}
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  ` : "";
   const historyBlock = (tc && tc.history && tc.history.length) ? `
     <div class="section">
       <h3>Geçmiş Konuşma</h3>
@@ -562,6 +697,7 @@ function renderMain() {
     </div>
 
     ${judgeBlock}
+    ${teamBlock}
 
     <div class="decision-bar">
       <h3 style="margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim);">Kararın</h3>
@@ -588,26 +724,40 @@ function renderMain() {
 
   // Wire up decision buttons
   main.querySelectorAll(".dbtn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const d = state.decisions[c.id] || {};
-      d.decision = btn.dataset.decision;
-      d.ts = new Date().toISOString();
+    btn.addEventListener("click", async () => {
       const noteEl = document.getElementById("note-input");
-      d.note = noteEl ? noteEl.value : "";
-      state.decisions[c.id] = d;
-      saveDecisions(state.decisions);
+      const note = noteEl ? noteEl.value : "";
+      const dec = btn.dataset.decision;
+      if (SERVER_MODE) {
+        try {
+          await postDecisionToServer(c.id, dec, note);
+        } catch (err) {
+          alert("Karar kaydedilemedi: " + err.message);
+          return;
+        }
+      } else {
+        state.decisions[c.id] = { decision: dec, note, ts: new Date().toISOString() };
+        saveLocalDecisions(state.decisions);
+      }
       render();
     });
   });
 
-  // Auto-save note on blur
+  // Auto-save note on blur (re-post current decision with new note)
   const noteEl = document.getElementById("note-input");
   if (noteEl) {
-    noteEl.addEventListener("blur", () => {
-      if (!state.decisions[c.id]) state.decisions[c.id] = {};
-      state.decisions[c.id].note = noteEl.value;
-      state.decisions[c.id].ts = new Date().toISOString();
-      saveDecisions(state.decisions);
+    noteEl.addEventListener("blur", async () => {
+      const my = getMyDecision(c.id);
+      if (!my || !my.decision) return;  // no decision yet → nothing to update
+      const newNote = noteEl.value;
+      if (newNote === (my.note || "")) return;
+      if (SERVER_MODE) {
+        try { await postDecisionToServer(c.id, my.decision, newNote); }
+        catch {}
+      } else {
+        state.decisions[c.id] = { ...my, note: newNote, ts: new Date().toISOString() };
+        saveLocalDecisions(state.decisions);
+      }
     });
   }
 
@@ -631,13 +781,21 @@ function renderMain() {
   document.getElementById("export-decisions").onclick = exportDecisions;
   document.getElementById("export-regression").onclick = exportRegression;
   document.getElementById("export-good").onclick = exportGood;
-  document.getElementById("clear-btn").onclick = () => {
-    if (confirm("Tüm kararlar silinecek. Emin misin?")) {
-      state.decisions = {};
-      saveDecisions(state.decisions);
-      render();
+  const clearBtn = document.getElementById("clear-btn");
+  if (clearBtn) {
+    if (SERVER_MODE) {
+      // Don't let one reviewer wipe team data from the UI
+      clearBtn.style.display = "none";
+    } else {
+      clearBtn.onclick = () => {
+        if (confirm("Tüm kararlar silinecek. Emin misin?")) {
+          state.decisions = {};
+          saveLocalDecisions(state.decisions);
+          render();
+        }
+      };
     }
-  };
+  }
 }
 
 function renderExpected(tc) {
@@ -659,38 +817,55 @@ function renderExpected(tc) {
 }
 
 // ─── Exports ────────────────────────────────────────────────────────────────
+// In server mode we work with the team-aggregate view; in local mode there's
+// only one reviewer's decisions. iterDecisions yields {id, decision, note, ts}
+// in both modes.
+function* iterMyDecisions() {
+  if (SERVER_MODE) {
+    for (const [id, entry] of Object.entries(state.decisions)) {
+      if (entry?.mine?.decision) yield { id, ...entry.mine };
+    }
+  } else {
+    for (const [id, d] of Object.entries(state.decisions)) {
+      if (d?.decision) yield { id, ...d };
+    }
+  }
+}
+
 function exportDecisions() {
+  const decisions = [...iterMyDecisions()];
   const out = {
     ts: new Date().toISOString(),
+    reviewer: state.reviewer || "local",
     report_ts: state.report?.ts || null,
-    decisions: state.decisions,
+    report_filename: state.reportFilename || null,
+    decisions,
     summary: {
-      excellent: Object.values(state.decisions).filter(d => d.decision === "excellent").length,
-      good:      Object.values(state.decisions).filter(d => d.decision === "good").length,
-      mid:       Object.values(state.decisions).filter(d => d.decision === "mid").length,
-      bad:       Object.values(state.decisions).filter(d => d.decision === "bad").length,
+      excellent: decisions.filter(d => d.decision === "excellent").length,
+      good:      decisions.filter(d => d.decision === "good").length,
+      mid:       decisions.filter(d => d.decision === "mid").length,
+      bad:       decisions.filter(d => d.decision === "bad").length,
     },
   };
   download(`review-decisions-${stamp()}.json`, JSON.stringify(out, null, 2));
 }
 
 function exportRegression() {
-  // For each Kötü/Orta decision, build a regression scenario
   const lines = [];
-  for (const [id, d] of Object.entries(state.decisions)) {
+  for (const d of iterMyDecisions()) {
     if (d.decision !== "bad" && d.decision !== "mid") continue;
-    const c = state.report.cases.find(x => x.id === id);
+    const c = state.report.cases.find(x => x.id === d.id);
     if (!c) continue;
-    const tc = state.dataset[id] || {};
+    const tc = state.dataset[d.id] || {};
     const scenario = {
-      id: `regression-${id}`,
+      id: `regression-${d.id}`,
       category: c.category,
       input: c.input,
       ...(tc.history ? { history: tc.history } : {}),
       expected_intent: c.detectedIntent,
       ...(tc.expected_tools ? { expected_tools: tc.expected_tools } : {}),
       must_not_contain: extractForbiddenSubstrings(c.response, d.note || ""),
-      notes: `Auto-generated from human review. Reason: ${d.note || "(no note)"} (decision: ${d.decision})`,
+      notes: `Auto-generated from human review by ${state.reviewer || "local"}. Reason: ${d.note || "(no note)"} (decision: ${d.decision})`,
     };
     lines.push(JSON.stringify(scenario));
   }
@@ -702,15 +877,14 @@ function exportRegression() {
 }
 
 function exportGood() {
-  // Few-shot pool — Mükemmel/İyi olanları
   const items = [];
-  for (const [id, d] of Object.entries(state.decisions)) {
+  for (const d of iterMyDecisions()) {
     if (d.decision !== "excellent" && d.decision !== "good") continue;
-    const c = state.report.cases.find(x => x.id === id);
+    const c = state.report.cases.find(x => x.id === d.id);
     if (!c) continue;
-    const tc = state.dataset[id] || {};
+    const tc = state.dataset[d.id] || {};
     items.push({
-      id,
+      id: d.id,
       category: c.category,
       input: c.input,
       history: tc.history || [],
@@ -719,6 +893,7 @@ function exportGood() {
       review_decision: d.decision,
       review_note: d.note || "",
       review_ts: d.ts,
+      reviewer: state.reviewer || "local",
     });
   }
   if (items.length === 0) {
@@ -726,6 +901,13 @@ function exportGood() {
     return;
   }
   download(`good-examples-${stamp()}.jsonl`, items.map(i => JSON.stringify(i)).join("\n"));
+}
+
+function decisionLabel(d) {
+  return { excellent: "Mükemmel", good: "İyi", mid: "Orta", bad: "Kötü" }[d] || d;
+}
+function decisionColor(d) {
+  return { excellent: "var(--good)", good: "var(--ok)", mid: "var(--mid)", bad: "var(--bad)" }[d] || "var(--text)";
 }
 
 // Heuristic — pull forbidden substrings from response based on the user's note.
@@ -781,6 +963,16 @@ document.addEventListener("keydown", (e) => {
 });
 function clickDecision(d) {
   document.querySelector(`.dbtn[data-decision="${d}"]`)?.click();
+}
+
+// ─── Boot ───────────────────────────────────────────────────────────────────
+if (SERVER_MODE) {
+  bootstrapServerMode();
+} else {
+  // Local mode — show file inputs
+  document.getElementById("local-mode-wrap").style.display = "";
+  document.getElementById("local-dataset-wrap").style.display = "";
+  document.getElementById("reviewer-tag").textContent = "Lokal mod (file://) — kararlar tarayıcıda saklanır";
 }
 </script>
 

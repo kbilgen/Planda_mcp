@@ -51,6 +51,17 @@ import {
   stripPermissionTail,
 } from "./guards/hallucinationGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
+import {
+  saveReport,
+  listReports,
+  getReport,
+  appendDecision,
+  listDecisions,
+  type ReviewDecision,
+} from "./services/reviewStorage.js";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve as pathResolve, join as pathJoin } from "node:path";
+import { readFile as fsReadFile, existsSync as fsExistsSync } from "node:fs";
 
 // Sentry must initialize before any other import that might throw
 initSentry();
@@ -649,6 +660,157 @@ async function runHttp(): Promise<void> {
       server: "planda-mcp-server",
       version: "1.0.0",
     });
+  });
+
+  // ── Review System ────────────────────────────────────────────────────────────
+  // Five-reviewer human evaluation panel. Static HTML at /review/, JSON API
+  // under /review/api/*. All review routes are gated by basic auth.
+  //
+  // Auth config: REVIEW_USERS env var, comma-separated "user:pass" pairs.
+  //   REVIEW_USERS=kaan:s3cr3t1,ayse:s3cr3t2,mehmet:s3cr3t3
+  // If unset, the route returns 503 — preventing accidental open access.
+
+  function parseReviewUsers(): Map<string, string> {
+    const raw = process.env.REVIEW_USERS;
+    const map = new Map<string, string>();
+    if (!raw) return map;
+    for (const pair of raw.split(",")) {
+      const [user, pass] = pair.split(":");
+      if (user && pass) map.set(user.trim(), pass.trim());
+    }
+    return map;
+  }
+
+  function reviewAuth(req: Request, res: Response, next: express.NextFunction): void {
+    const users = parseReviewUsers();
+    if (users.size === 0) {
+      res.status(503).json({ error: "Review system not configured. Set REVIEW_USERS env var." });
+      return;
+    }
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith("Basic ")) {
+      res.set("WWW-Authenticate", 'Basic realm="Planda Review", charset="UTF-8"');
+      res.status(401).send("Authentication required");
+      return;
+    }
+    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+    const colonIdx = decoded.indexOf(":");
+    if (colonIdx < 0) {
+      res.status(401).send("Malformed credentials");
+      return;
+    }
+    const user = decoded.slice(0, colonIdx);
+    const pass = decoded.slice(colonIdx + 1);
+    const expected = users.get(user);
+    if (!expected || expected !== pass) {
+      res.set("WWW-Authenticate", 'Basic realm="Planda Review", charset="UTF-8"');
+      res.status(401).send("Invalid credentials");
+      return;
+    }
+    // Stash username for downstream handlers
+    (req as Request & { reviewUser?: string }).reviewUser = user;
+    next();
+  }
+
+  // Filesystem path of evals/ — used to serve dataset.jsonl + review.html.
+  // dist/index.js sits at planda-mcp-server/dist/, so evals/ is one level up.
+  const __thisFile = fileURLToPath(import.meta.url);
+  const EVALS_DIR = pathResolve(dirname(__thisFile), "..", "evals");
+
+  // ── GET /review → review.html ────────────────────────────────────────────────
+  app.get("/review", reviewAuth, (req: Request, res: Response) => {
+    const htmlPath = pathJoin(EVALS_DIR, "review.html");
+    if (!fsExistsSync(htmlPath)) {
+      res.status(500).send("review.html not found at " + htmlPath);
+      return;
+    }
+    fsReadFile(htmlPath, "utf8", (err, data) => {
+      if (err) { res.status(500).send("Failed to read review.html"); return; }
+      res.type("html").send(data);
+    });
+  });
+
+  // ── Review API ──────────────────────────────────────────────────────────────
+  app.get("/review/api/whoami", reviewAuth, (req: Request, res: Response) => {
+    const user = (req as Request & { reviewUser?: string }).reviewUser;
+    res.json({ reviewer: user });
+  });
+
+  app.get("/review/api/reports", reviewAuth, async (_req: Request, res: Response) => {
+    try {
+      const reports = await listReports();
+      res.json({ reports });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get("/review/api/reports/:filename", reviewAuth, async (req: Request, res: Response) => {
+    try {
+      const report = await getReport(req.params.filename);
+      if (!report) { res.status(404).json({ error: "Report not found" }); return; }
+      res.json(report);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/review/api/reports", reviewAuth, express.json({ limit: "5mb" }), async (req: Request, res: Response) => {
+    try {
+      const meta = await saveReport(req.body);
+      res.json({ ok: true, ...meta });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get("/review/api/dataset", reviewAuth, (_req: Request, res: Response) => {
+    const dsPath = pathJoin(EVALS_DIR, "dataset.jsonl");
+    if (!fsExistsSync(dsPath)) {
+      res.status(404).json({ error: "dataset.jsonl not bundled" });
+      return;
+    }
+    fsReadFile(dsPath, "utf8", (err, data) => {
+      if (err) { res.status(500).json({ error: "Failed to read dataset" }); return; }
+      res.type("text/plain").send(data);
+    });
+  });
+
+  app.get("/review/api/decisions/:reportFilename", reviewAuth, async (req: Request, res: Response) => {
+    try {
+      const decisions = await listDecisions(req.params.reportFilename);
+      res.json({ decisions });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/review/api/decisions", reviewAuth, express.json({ limit: "100kb" }), async (req: Request, res: Response) => {
+    try {
+      const reviewer = (req as Request & { reviewUser?: string }).reviewUser;
+      if (!reviewer) { res.status(401).json({ error: "No reviewer" }); return; }
+      const body = req.body as Partial<ReviewDecision>;
+      if (!body.reportFilename || !body.scenarioId || !body.decision) {
+        res.status(400).json({ error: "reportFilename, scenarioId, decision required" });
+        return;
+      }
+      if (!["excellent", "good", "mid", "bad"].includes(body.decision)) {
+        res.status(400).json({ error: "Invalid decision value" });
+        return;
+      }
+      const decision: ReviewDecision = {
+        reportFilename: body.reportFilename,
+        scenarioId: body.scenarioId,
+        reviewer,
+        decision: body.decision,
+        note: body.note ?? "",
+        ts: new Date().toISOString(),
+      };
+      await appendDecision(decision);
+      res.json({ ok: true, decision });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
   });
 
   // ── GET /.well-known/openai-apps-challenge — ChatGPT domain verification ─────

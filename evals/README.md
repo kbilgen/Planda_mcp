@@ -39,34 +39,82 @@ npm run eval -- --filter availability
 3. `tsx evals/run.ts --filter <id>` ile tek case'i çalıştır, geçtiğini doğrula.
 4. Commit.
 
-## İnsan Review (`review.html`)
+## İnsan Review — İki Mod
 
-LLM judge'a ek olarak proje sahibi rapordaki cevapları gözden geçirip
-kendi kararını verebilir. Akış:
+LLM judge'a ek olarak insanlar `review.html` ile rapordaki cevapları
+gözden geçirip kararını verir. İki kullanım modu var:
+
+### Mod A — Sunucu (Ekip için, çoklu reviewer)
+
+Production server review API'sini host eder. 5 kişilik ekip aynı
+raporu görür, kararları sunucuda toplanır.
+
+**Kurulum (bir kez):**
+
+1. Railway'de bir **persistent volume** oluştur (Settings → Volumes).
+   Mount path: `/data` (veya istediğin yer; `RAILWAY_VOLUME_MOUNT_PATH`
+   env variable otomatik set olacak).
+2. Aşağıdaki env variable'ı Railway dashboard'tan ekle:
+   ```
+   REVIEW_USERS=kaan:sifre1,ayse:sifre2,mehmet:sifre3,zeynep:sifre4,ali:sifre5
+   ```
+   Her kullanıcı kendi şifresiyle login olur, kararları kim verdiğine
+   göre kayıt edilir.
+3. Deploy.
+
+**Akış:**
 
 ```bash
-# 1. Eval'i koş (judge ile)
+# 1. Lokal'de eval koş
 npm run eval -- --judge
 
-# 2. review.html'i tarayıcıda aç (dosyayı çift tıkla veya basit bir
-#    static server kullan)
+# 2. Raporu sunucuya yükle (.env'de REVIEW_BASE_URL, REVIEW_USER, REVIEW_PASS olmalı)
+npm run eval:upload
+
+# 3. Ekip URL'i açar
+#    https://<host>/review
+#    → Browser basic-auth popup'ı çıkar, kullanıcı adı + şifre yazılır
+#    → En son rapor otomatik yüklenir, dataset.jsonl otomatik gelir
+#    → Her reviewer kendi kararını verir, takım kararları yan tarafta görünür
+```
+
+**Env variable'lar (lokal `.env`):**
+```
+REVIEW_BASE_URL=https://plandamcp-production.up.railway.app
+REVIEW_USER=kaan
+REVIEW_PASS=sifre1
+```
+
+### Mod B — Lokal (Tek kişi için)
+
+Sunucusuz — `review.html` dosyasını tarayıcıda aç:
+
+```bash
+# Çift tıkla veya:
 cd evals && python3 -m http.server 8080
 # → http://localhost:8080/review.html
 ```
 
 UI'da:
-1. **Eval rapor (JSON)** alanından az önce üretilen `reports/<ts>.json`'u seç
-2. **Dataset (JSONL)** alanından `dataset.jsonl`'i seç (beklenen davranış görünsün)
-3. **Sadece şüpheliler** kutusunu işaretle — judge skoru ≤3 ya da assertion fail olanlar
-4. Her senaryo için **Mükemmel / İyi / Orta / Kötü** seç + opsiyonel not yaz
-5. Bitirince **Dışa aktar**:
-   - `review-decisions-*.json` — tüm kararların kaydı
-   - `regression-additions-*.jsonl` — Kötü/Orta kararlar otomatik regression senaryosuna dönüşür, `dataset.jsonl`'in sonuna kopyalayabilirsin
-   - `good-examples-*.jsonl` — Mükemmel/İyi olanlar few-shot havuzuna eklenebilir
+1. **Eval rapor (JSON)** alanından `reports/<ts>.json`'u seç
+2. **Dataset (JSONL)** alanından `dataset.jsonl`'i seç
+3. Kararlar tarayıcı `localStorage`'ında saklanır
 
-Kararlar tarayıcı `localStorage`'ında saklanır — sayfayı kapatırsan
-kaybolmaz. Klavye kısayolları: `1`/`2`/`3`/`4` karar, `j`/`k` veya
-ok tuşları senaryo değiştir.
+### Karar verme
+
+- **Sadece şüpheliler** kutusu — judge ≤3 veya assertion fail olanlar
+- 4 buton: **Mükemmel / İyi / Orta / Kötü** (klavyeden 1/2/3/4)
+- Opsiyonel not — özellikle "Kötü" verirken **neden** yaz, regression
+  senaryosuna otomatik geçer
+- Klavye: `j`/`k` veya `↑`/`↓` ile senaryolar arası
+
+### Export (her iki mod)
+
+- **Kararları İndir** — tüm kararların JSON dökümü
+- **Kötü/Orta → regression-additions.jsonl** — `dataset.jsonl`'e
+  eklenebilecek hazır regression senaryoları
+- **Mükemmel/İyi → good-examples.jsonl** — gelecekteki few-shot
+  retrieval havuzu için
 
 ## CI
 
