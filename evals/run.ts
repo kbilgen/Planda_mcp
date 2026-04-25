@@ -14,11 +14,39 @@
  */
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCase } from "./runner.js";
 import { judgeCase } from "./judge.js";
 import type { TestCase, CaseResult, EvalReport } from "./types.js";
+
+// Tiny .env loader — looks one level up (project root). No external dep so
+// the eval CLI stays drop-in runnable without `dotenv`.
+function loadDotEnv(): void {
+  const candidates = [
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env"),
+    resolve(process.cwd(), ".env"),
+  ];
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    const raw = readFileSync(path, "utf8");
+    for (const line of raw.split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const m = t.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i);
+      if (!m) continue;
+      const key = m[1];
+      let val = m[2];
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (!process.env[key]) process.env[key] = val;
+    }
+    return;
+  }
+}
+loadDotEnv();
 
 const __filename = fileURLToPath(import.meta.url);
 const EVALS_DIR = dirname(__filename);
