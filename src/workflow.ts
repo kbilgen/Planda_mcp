@@ -106,7 +106,8 @@ Server-side filter: city (in-person only). All others (gender, price, specialty,
   },
   {
     name: "get_therapist",
-    description: `Fetch full profile of a single therapist by ID.
+    description: `Fetch full profile of a single therapist by ID or username.
+Prefer username (already in find_therapists results) — no extra lookup needed.
 ⚠️ MANDATORY for approach queries (BDT, EMDR, ACT, Schema, Gestalt etc.):
   - Call for EVERY candidate
   - approaches[].name does NOT contain the requested method → EXCLUDE
@@ -114,9 +115,9 @@ Server-side filter: city (in-person only). All others (gender, price, specialty,
     input_schema: {
       type: "object" as const,
       properties: {
-        id: { type: ["string", "number"] as never, description: "Therapist unique ID" },
+        id: { type: ["string", "number"] as never, description: "Therapist numeric ID (use username instead if available)" },
+        username: { type: "string" as const, description: "Therapist username slug (e.g. gulcin_yilmaz) — preferred over id" },
       },
-      required: ["id"],
     },
   },
   {
@@ -165,8 +166,14 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         if (input.city) q.city = input.city;
         return JSON.stringify(await makeApiRequest("marketplace/therapists", "GET", undefined, q));
       }
-      case "get_therapist":
-        return JSON.stringify(await makeApiRequest(`marketplace/therapists/${input.id}`));
+      case "get_therapist": {
+        // Numeric id → /therapists/{id}, string username → /therapists/username/{username}
+        const idOrUsername = input.id ?? input.username;
+        const path = typeof idOrUsername === "number" || /^\d+$/.test(String(idOrUsername))
+          ? `marketplace/therapists/${idOrUsername}`
+          : `marketplace/therapists/username/${idOrUsername}`;
+        return JSON.stringify(await makeApiRequest(path));
+      }
       case "list_specialties":
         return JSON.stringify(await makeApiRequest("marketplace/specialties"));
       case "get_therapist_hours": {

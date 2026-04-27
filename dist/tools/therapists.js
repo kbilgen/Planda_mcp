@@ -317,7 +317,12 @@ Returns per therapist:
         .object({
         id: z
             .union([z.string(), z.number()])
-            .describe("The therapist's unique ID (string or number)"),
+            .optional()
+            .describe("The therapist's numeric ID. Use 'username' instead if available."),
+        username: z
+            .string()
+            .optional()
+            .describe("The therapist's username slug (e.g. gulcin_yilmaz) — preferred, already in find_therapists results."),
         response_format: z
             .nativeEnum(ResponseFormat)
             .default(ResponseFormat.MARKDOWN)
@@ -326,20 +331,25 @@ Returns per therapist:
         .strict();
     server.registerTool("get_therapist", {
         title: "Get Therapist Detail",
-        description: `Fetches the full profile of a single therapist by ID.
+        description: `Fetches the full profile of a single therapist by username or ID.
+
+PREFER username (already in find_therapists results as the 'username' field).
+  - username → /therapists/username/{username}  (e.g. gulcin_yilmaz)
+  - id       → /therapists/{id}                (numeric fallback)
 
 ⚠️ APPROACH VERIFICATION — MANDATORY:
 approaches[] (BDT, EMDR, ACT, Gestalt, Schema, etc.) is ONLY available here.
 find_therapists does NOT return approaches[].
 
 When the user requests a specific therapy approach:
-  1. Call this tool for every candidate
+  1. Call this tool for every candidate (pass username from find_therapists)
   2. Check approaches[].name — requested approach NOT in list → EXCLUDE therapist
   3. NEVER recommend for an approach query without confirming via approaches[]
   4. If call fails or approaches[] is empty/null → EXCLUDE, do not guess
 
 Args:
-  - id: therapist's unique ID (from find_therapists)
+  - username: therapist's username slug (preferred)
+  - id: therapist's numeric ID (fallback if username not available)
   - response_format: "markdown" (default) | "json"
 
 Returns:
@@ -357,7 +367,15 @@ Error Handling:
         },
     }, async (params) => {
         try {
-            const raw = await makeApiRequest(`marketplace/therapists/${params.id}`);
+            const idOrUsername = params.username ?? params.id;
+            if (!idOrUsername)
+                throw new Error("Provide 'id' or 'username'");
+            const path = params.username
+                ? `marketplace/therapists/username/${params.username}`
+                : typeof params.id === "number" || /^\d+$/.test(String(params.id))
+                    ? `marketplace/therapists/${params.id}`
+                    : `marketplace/therapists/username/${params.id}`;
+            const raw = await makeApiRequest(path);
             // Handle both { data: Therapist } and bare Therapist responses
             const therapist = "data" in raw && raw.data ? raw.data : raw;
             let text;
