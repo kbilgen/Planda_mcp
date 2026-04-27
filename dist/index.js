@@ -4,17 +4,27 @@
  *
  * Endpoints:
  *   GET  /health                    — liveness check (no auth)
- *   POST /v1/assistant/chat         — iOS chat, buffered (no auth)
- *   GET  /v1/assistant/chat/stream  — iOS chat, SSE streaming (no auth)
- *   POST /api/chat                  — legacy compat, stateless (no auth)
- *   POST /mcp                       — MCP JSON-RPC (AI clients)
+ *   POST /v1/assistant/chat         — iOS chat, buffered  [API key + user token]
+ *   POST /v1/assistant/chat/stream  — iOS chat, SSE       [API key + user token]
+ *   GET  /v1/assistant/history      — fetch session msgs  [API key + user token]
+ *   POST /api/chat                  — legacy stateless     [API key + user token]
+ *   POST /mcp                       — MCP JSON-RPC (AI clients, no user token)
  *   GET  /mcp                       — MCP SSE stream
  *   DELETE /mcp                     — MCP session termination
+ *
+ * iOS auth flow:
+ *   X-API-Key:    <API_SECRET_KEY>          shared app secret
+ *   Authorization: Bearer <planda_token>     user's Sanctum token from login
+ * Server validates the bearer against Planda /marketplace/user (auth.ts),
+ * caches success in Redis 5 min. Set SKIP_USER_AUTH=1 only for local dev.
  *
  * Environment variables:
  *   PORT                  — HTTP port (Railway sets automatically)
  *   TRANSPORT             — "http" (default) | "stdio"
  *   OPENAI_API_KEY        — Required for chat endpoints
+ *   API_SECRET_KEY        — Required: shared app secret (X-API-Key header)
+ *   PLANDA_AUTH_ENDPOINT  — Override Planda token-validate URL (default: /marketplace/user)
+ *   SKIP_USER_AUTH        — "1" to bypass user-token check (DEV ONLY)
  *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
  *   REDIS_URL             — Redis connection string for persistent sessions
  */
@@ -27,6 +37,7 @@ import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat, runChatStream } from "./workflow.js";
 import { getHistory, saveHistory } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
+import { validatePlandaToken } from "./auth.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
 import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, stripPermissionTail, } from "./guards/hallucinationGuard.js";
@@ -433,6 +444,7 @@ async function observeTurn(opts) {
     await logTurn({
         ts: new Date().toISOString(),
         sessionId: opts.sessionId,
+        userId: opts.userId,
         userMessage: opts.userMessage,
         response: opts.response,
         toolCalls,
@@ -458,6 +470,29 @@ function requireApiKey(req, res, next) {
         return;
     }
     res.status(401).json({ error: "Unauthorized" });
+}
+async function requireUserToken(req, res, next) {
+    if (process.env.SKIP_USER_AUTH === "1" || process.env.SKIP_USER_AUTH === "true") {
+        next();
+        return;
+    }
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Authorization: Bearer <planda_token> required" });
+        return;
+    }
+    const token = auth.slice(7).trim();
+    if (!token) {
+        res.status(401).json({ error: "Empty bearer token" });
+        return;
+    }
+    const result = await validatePlandaToken(token);
+    if (!result.valid) {
+        res.status(401).json({ error: "Invalid or expired Planda token" });
+        return;
+    }
+    req.userId = result.userId;
+    next();
 }
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 function sseWrite(res, event, data) {
@@ -714,7 +749,7 @@ async function runHttp() {
     // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
     //          history yoksa → session store'dan yükle
     //
-    app.post("/v1/assistant/chat", requireApiKey, async (req, res) => {
+    app.post("/v1/assistant/chat", requireApiKey, requireUserToken, async (req, res) => {
         if (!process.env.OPENAI_API_KEY) {
             res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
             return;
@@ -731,6 +766,7 @@ async function runHttp() {
             return;
         }
         const sessionId = extractSessionId(body, req);
+        const userId = req.userId;
         const history = await resolveHistory(Array.isArray(body.history) ? body.history : null, sessionId);
         const intent = classifyIntent(message, history);
         const forceToolCall = shouldForceToolCall(intent);
@@ -746,7 +782,7 @@ async function runHttp() {
                 saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
             }
             observeTurn({
-                sessionId, userMessage: message, response,
+                sessionId, userId, userMessage: message, response,
                 toolCalls, latencyMs: Date.now() - startedAt, model,
                 endpoint: "/v1/assistant/chat",
                 precomputedIntent: intent,
@@ -763,7 +799,7 @@ async function runHttp() {
         catch (err) {
             console.error("[planda] /v1/assistant/chat error:", err);
             observeTurn({
-                sessionId, userMessage: message, response: "",
+                sessionId, userId, userMessage: message, response: "",
                 latencyMs: Date.now() - startedAt,
                 endpoint: "/v1/assistant/chat",
                 error: err instanceof Error ? err.message : String(err),
@@ -776,7 +812,7 @@ async function runHttp() {
     // (NSURLErrorNetworkConnectionLost = -1005). Server response'u tamamlayıp
     // saveHistory ile Redis'e yazmaya devam eder; client foreground'a dönünce
     // bu endpoint ile en güncel history'yi çekip UI'ı senkronize eder.
-    app.get("/v1/assistant/history", requireApiKey, async (req, res) => {
+    app.get("/v1/assistant/history", requireApiKey, requireUserToken, async (req, res) => {
         const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
         if (!checkRateLimit(ip)) {
             res.status(429).json({ error: "Too many requests. Please wait a moment before retrying." });
@@ -807,7 +843,7 @@ async function runHttp() {
     //
     // iOS'ta: URLSession + EventSource ile parse edilir.
     //
-    app.post("/v1/assistant/chat/stream", requireApiKey, async (req, res) => {
+    app.post("/v1/assistant/chat/stream", requireApiKey, requireUserToken, async (req, res) => {
         if (!process.env.OPENAI_API_KEY) {
             res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
             return;
@@ -824,6 +860,7 @@ async function runHttp() {
             return;
         }
         const sessionId = extractSessionId(body, req);
+        const userId = req.userId;
         // SSE headers
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
@@ -880,7 +917,7 @@ async function runHttp() {
                 saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
             }
             observeTurn({
-                sessionId, userMessage: message, response,
+                sessionId, userId, userMessage: message, response,
                 toolCalls, latencyMs: Date.now() - startedAt, model,
                 endpoint: "/v1/assistant/chat/stream",
                 precomputedIntent: intent,
@@ -897,7 +934,7 @@ async function runHttp() {
         catch (err) {
             console.error("[planda] /v1/assistant/chat/stream error:", err);
             observeTurn({
-                sessionId, userMessage: message, response: "",
+                sessionId, userId, userMessage: message, response: "",
                 latencyMs: Date.now() - startedAt,
                 endpoint: "/v1/assistant/chat/stream",
                 error: err instanceof Error ? err.message : String(err),
@@ -910,7 +947,7 @@ async function runHttp() {
         }
     });
     // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
-    app.post("/api/chat", requireApiKey, async (req, res) => {
+    app.post("/api/chat", requireApiKey, requireUserToken, async (req, res) => {
         if (!process.env.OPENAI_API_KEY) {
             res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
             return;
@@ -936,6 +973,7 @@ async function runHttp() {
             const text = guarded.response;
             observeTurn({
                 sessionId: "legacy-" + (req.ip ?? "unknown"),
+                userId: req.userId,
                 userMessage: message,
                 response: text,
                 toolCalls,

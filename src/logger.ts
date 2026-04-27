@@ -31,6 +31,8 @@ export interface GuardViolation {
 export interface TurnLog {
   ts: string;
   sessionId: string;
+  /** Planda user id from auth token — only present on authenticated endpoints. */
+  userId?: string;
   userMessage: string;
   response: string;
   toolCalls: ToolCallLog[];

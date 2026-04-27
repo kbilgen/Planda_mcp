@@ -85,7 +85,9 @@ export function reportTurnToSentry(turn: TurnLog): void {
     scope.setTag("has_violations", String(violationCount > 0));
     scope.setTag("tool_count", String(turn.toolCalls.length));
 
-    scope.setUser({ id: turn.sessionId });
+    // Prefer Planda user id (stable across sessions); fall back to sessionId.
+    scope.setUser({ id: turn.userId ?? turn.sessionId });
+    if (turn.userId) scope.setTag("user_id", turn.userId);
 
     scope.setContext("turn", {
       sessionId: turn.sessionId,
