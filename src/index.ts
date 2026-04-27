@@ -15,18 +15,22 @@
  * iOS auth flow:
  *   X-API-Key:    <API_SECRET_KEY>          shared app secret
  *   Authorization: Bearer <planda_token>     user's Sanctum token from login
- * Server validates the bearer against Planda /marketplace/user (auth.ts),
- * caches success in Redis 5 min. Set SKIP_USER_AUTH=1 only for local dev.
+ *   X-User-ID:     <numeric_planda_id>       user's id from login response
+ * Server hits Planda /marketplace/clients/{X-User-ID} with the bearer; only
+ * a 200 (= token belongs to that user) passes. 401/403/404 all reject.
+ * Successful results are cached in Redis for 5 minutes. Set SKIP_USER_AUTH=1
+ * only for local dev — never in production.
  *
  * Environment variables:
- *   PORT                  — HTTP port (Railway sets automatically)
- *   TRANSPORT             — "http" (default) | "stdio"
- *   OPENAI_API_KEY        — Required for chat endpoints
- *   API_SECRET_KEY        — Required: shared app secret (X-API-Key header)
- *   PLANDA_AUTH_ENDPOINT  — Override Planda token-validate URL (default: /marketplace/user)
- *   SKIP_USER_AUTH        — "1" to bypass user-token check (DEV ONLY)
- *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
- *   REDIS_URL             — Redis connection string for persistent sessions
+ *   PORT                          — HTTP port (Railway sets automatically)
+ *   TRANSPORT                     — "http" (default) | "stdio"
+ *   OPENAI_API_KEY                — Required for chat endpoints
+ *   API_SECRET_KEY                — Required: shared app secret (X-API-Key)
+ *   PLANDA_AUTH_ENDPOINT_TEMPLATE — Override validate URL (default:
+ *                                    https://app.planda.org/api/v1/marketplace/clients/{userId})
+ *   SKIP_USER_AUTH                — "1" to bypass user-token check (DEV ONLY)
+ *   CORS_ORIGIN                   — Allowed CORS origin (default: "*")
+ *   REDIS_URL                     — Redis connection string for persistent sessions
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -589,8 +593,9 @@ function requireApiKey(req: Request, res: Response, next: express.NextFunction):
 }
 
 // ─── User token guard (Planda Sanctum) ───────────────────────────────────────
-// "Authorization: Bearer <planda_token>" — iOS uygulamasında login olmuş
-// kullanıcının Sanctum token'ını Planda /marketplace/user'a sorarak doğrular.
+// "Authorization: Bearer <planda_token>" + "X-User-ID: <numeric_id>"
+// — server, Planda /marketplace/clients/{X-User-ID}'i bearer ile çağırır.
+// 200 → valid; 401 invalid token; 403 başka user (impersonation); 404 unknown.
 // 5dk Redis cache (auth.ts), Planda erişilemezse fail-closed (401).
 //
 // Dev override: SKIP_USER_AUTH=1 — production'da KESİNLİKLE set ETMEYIN.
@@ -598,6 +603,8 @@ function requireApiKey(req: Request, res: Response, next: express.NextFunction):
 interface AuthedRequest extends Request {
   userId?: string;
 }
+
+const USER_ID_HEADER_RE = /^[1-9]\d{0,9}$/;
 
 async function requireUserToken(
   req: Request,
@@ -618,9 +625,15 @@ async function requireUserToken(
     res.status(401).json({ error: "Empty bearer token" });
     return;
   }
-  const result = await validatePlandaToken(token);
+  const userIdHeader = req.headers["x-user-id"];
+  const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
+  if (!userId || typeof userId !== "string" || !USER_ID_HEADER_RE.test(userId)) {
+    res.status(401).json({ error: "X-User-ID header required (numeric Planda user id)" });
+    return;
+  }
+  const result = await validatePlandaToken(token, userId);
   if (!result.valid) {
-    res.status(401).json({ error: "Invalid or expired Planda token" });
+    res.status(401).json({ error: "Invalid token or user mismatch" });
     return;
   }
   (req as AuthedRequest).userId = result.userId;
@@ -703,7 +716,7 @@ async function runHttp(): Promise<void> {
   const corsOptions: cors.CorsOptions = {
     origin: corsOrigin,
     methods: ["GET", "POST", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id", "X-API-Key"],
+    allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id", "X-API-Key", "X-User-ID"],
     exposedHeaders: ["Mcp-Session-Id"],
   };
   app.use(cors(corsOptions));
