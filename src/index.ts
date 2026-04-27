@@ -920,6 +920,31 @@ async function runHttp(): Promise<void> {
     }
   });
 
+  // ── GET /v1/assistant/history — fetch session history by id ─────────────────
+  // iOS uygulaması arka plana geçince SSE bağlantısı kopabilir
+  // (NSURLErrorNetworkConnectionLost = -1005). Server response'u tamamlayıp
+  // saveHistory ile Redis'e yazmaya devam eder; client foreground'a dönünce
+  // bu endpoint ile en güncel history'yi çekip UI'ı senkronize eder.
+  app.get("/v1/assistant/history", requireApiKey, async (req: Request, res: Response) => {
+    const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+    if (!checkRateLimit(ip)) {
+      res.status(429).json({ error: "Too many requests. Please wait a moment before retrying." });
+      return;
+    }
+    const sessionId = typeof req.query.session_id === "string" ? req.query.session_id.trim() : "";
+    if (!sessionId || !UUID_RE.test(sessionId)) {
+      res.status(400).json({ error: "session_id query parameter required (valid UUID)" });
+      return;
+    }
+    try {
+      const history = await getHistory(sessionId);
+      res.json({ session_id: sessionId, history, count: history.length });
+    } catch (err) {
+      console.error("[planda] /v1/assistant/history error:", err);
+      res.status(500).json({ error: "history fetch failed" });
+    }
+  });
+
   // ── POST /v1/assistant/chat/stream — iOS SSE streaming endpoint ──────────────
   //
   // @openai/agents token-level streaming'i desteklemez.
@@ -965,7 +990,25 @@ async function runHttp(): Promise<void> {
     res.setHeader("X-Accel-Buffering", "no"); // Nginx proxy buffering'i kapat
     res.flushHeaders();
 
+    const startedAt = Date.now();
     const keepalive = setInterval(() => { try { res.write(": keepalive\n\n"); } catch { clearInterval(keepalive); } }, 15000);
+
+    // iOS uygulaması arka plana geçince TCP koparılır. Backend yine de
+    // runChatStream'i tamamlayıp saveHistory ile Redis'e yazar; client
+    // foreground'a dönünce GET /v1/assistant/history ile alır. Bu flag
+    // disconnect sonrası res.write çağrılarını sessizce no-op yapar — boşa
+    // exception loglamayız ama OpenAI çağrıları yarıda durmaz.
+    let clientDisconnected = false;
+    req.on("close", () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        clearInterval(keepalive);
+        console.log("[planda] stream client disconnected", {
+          sessionId,
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
+    });
 
     const history = await resolveHistory(
       Array.isArray(body.history) ? body.history : null,
@@ -975,17 +1018,16 @@ async function runHttp(): Promise<void> {
     const intent = classifyIntent(message, history);
     const forceToolCall = shouldForceToolCall(intent);
 
-    const startedAt = Date.now();
     try {
       let fullText = "";
 
       const { updatedHistory, toolCalls, model } = await runChatStream(
         { message, history, forceToolCall },
         {
-          onStatus: (msg) => sseWrite(res, "status", { message: msg }),
+          onStatus: (msg) => { if (!clientDisconnected) sseWrite(res, "status", { message: msg }); },
           onDelta: (delta) => {
             fullText += delta;
-            sseWrite(res, "delta", { delta });
+            if (!clientDisconnected) sseWrite(res, "delta", { delta });
           },
         }
       );
