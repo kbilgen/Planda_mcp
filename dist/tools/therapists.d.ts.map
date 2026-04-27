@@ -1,1 +1,1 @@
-{"version":3,"file":"therapists.d.ts","sourceRoot":"","sources":["../../src/tools/therapists.ts"],"names":[],"mappings":"AAAA;;;;;;;;;GASG;AAEH,OAAO,EAAE,SAAS,EAAE,MAAM,yCAAyC,CAAC;AAsTpE,wBAAgB,sBAAsB,CAAC,MAAM,EAAE,SAAS,GAAG,IAAI,CAsnB9D"}
+{"version":3,"file":"therapists.d.ts","sourceRoot":"","sources":["../../src/tools/therapists.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;GAUG;AAEH,OAAO,EAAE,SAAS,EAAE,MAAM,yCAAyC,CAAC;AAsTpE,wBAAgB,sBAAsB,CAAC,MAAM,EAAE,SAAS,GAAG,IAAI,CAukB9D"}

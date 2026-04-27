@@ -1111,13 +1111,17 @@ async function runHttp(): Promise<void> {
     }
     try {
       const {
-        findTherapists, getTherapist, listSpecialties,
+        findTherapists, getTherapist, getTherapistByUsername, listSpecialties,
         getTherapistHours, getTherapistAvailableDays,
       } = await import("./services/therapistApi.js");
       let result: unknown;
       switch (tool) {
         case "find_therapists":          result = await findTherapists(params); break;
-        case "get_therapist":            result = await getTherapist(params.id); break;
+        case "get_therapist":
+          result = params.username
+            ? await getTherapistByUsername(params.username)
+            : await getTherapist(params.id);
+          break;
         case "list_specialties":         result = await listSpecialties(); break;
         case "get_therapist_hours":      result = await getTherapistHours(params); break;
         case "get_therapist_available_days": result = await getTherapistAvailableDays(params); break;

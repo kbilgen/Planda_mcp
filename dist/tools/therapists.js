@@ -1,12 +1,13 @@
 /**
  * Planda MCP Server — Therapist Tools
  *
- * Registers five tools on the provided McpServer instance:
+ * Registers tools on the provided McpServer instance:
  *   1. find_therapists               — paginated list with optional filters
- *   2. get_therapist                 — single therapist detail by ID
+ *   2. get_therapist                 — single therapist detail (username preferred, id fallback)
  *   3. list_specialties              — all specialty areas
  *   4. get_therapist_hours           — available time slots for a date
  *   5. get_therapist_available_days  — available dates for a branch
+ *   6. get_active_cities             — cities with active therapists
  */
 import { z } from "zod";
 import { handleApiError } from "../services/apiClient.js";
@@ -442,40 +443,62 @@ Returns per therapist:
         }
     });
     // ── 2. get_therapist ─────────────────────────────────────────────────────────
+    // Username regex — Planda usernames are ASCII identifiers like "gulcin_yilmaz".
+    // Reject anything else so it can't be smuggled into the path.
+    const USERNAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
     const GetInputSchema = z
         .object({
+        username: z
+            .string()
+            .min(1)
+            .max(64)
+            .regex(USERNAME_REGEX, "username must be ASCII letters/digits/underscore/hyphen")
+            .optional()
+            .describe('Therapist username slug, e.g. "gulcin_yilmaz". PREFERRED: find_therapists already returns username, so use it directly without an extra ID lookup.'),
         id: z
             .union([z.string(), z.number()])
-            .describe("The therapist's unique ID (string or number)"),
+            .optional()
+            .describe("Therapist numeric ID. Fallback for username — use only when username is unknown (e.g. linking from a blog post that stores ID)."),
         response_format: z
             .nativeEnum(ResponseFormat)
             .default(ResponseFormat.MARKDOWN)
             .describe('Output format: "markdown" for human-readable, "json" for structured data'),
     })
-        .strict();
+        .strict()
+        .refine((d) => d.username !== undefined || d.id !== undefined, {
+        message: "Either 'username' or 'id' must be provided.",
+    });
     server.registerTool("get_therapist", {
         title: "Get Therapist Detail",
-        description: `Fetches the full profile of a single therapist by ID.
+        description: `Fetches the full profile of a single therapist.
+
+LOOKUP KEY — prefer username:
+  • username (PREFERRED): find_therapists returns it on every result, so no
+    extra ID resolution step is needed.
+  • id (FALLBACK): use only when username isn't available — e.g. a blog post
+    or external link references a therapist by numeric ID.
 
 ⚠️ APPROACH VERIFICATION — MANDATORY:
 approaches[] (BDT, EMDR, ACT, Gestalt, Schema, etc.) is ONLY available here.
 find_therapists does NOT return approaches[].
 
 When the user requests a specific therapy approach:
-  1. Call this tool for every candidate
+  1. Call this tool for every candidate (using username from find_therapists)
   2. Check approaches[].name — requested approach NOT in list → EXCLUDE therapist
   3. NEVER recommend for an approach query without confirming via approaches[]
   4. If call fails or approaches[] is empty/null → EXCLUDE, do not guess
 
-Args:
-  - id: therapist's unique ID (from find_therapists)
+Args (one of username/id required):
+  - username: slug like "gulcin_yilmaz" (preferred)
+  - id: numeric ID (fallback)
   - response_format: "markdown" (default) | "json"
 
 Returns:
-  approaches[], tenants[], specialties, bio, education, pricing, location, rating.
+  approaches[], tenants[], specialties, bio (introduction_letter),
+  inform (Randevu/Ücret notu), education, pricing, location, rating, campaigns.
 
 Error Handling:
-  - "Error: Resource not found" if ID doesn't exist
+  - "Error: Resource not found" if username/ID doesn't exist
   - On any error for approach queries → exclude this therapist`,
         inputSchema: GetInputSchema,
         annotations: {
@@ -486,70 +509,11 @@ Error Handling:
         },
     }, async (params) => {
         try {
-            const raw = await getTherapist(params.id);
+            // Username preferred; id is the legacy/blog-linking fallback.
+            const raw = params.username !== undefined
+                ? await getTherapistByUsername(params.username)
+                : await getTherapist(params.id);
             // Handle both { data: Therapist } and bare Therapist responses
-            const therapist = "data" in raw && raw.data ? raw.data : raw;
-            let text;
-            if (params.response_format === ResponseFormat.JSON) {
-                text = JSON.stringify(therapist, null, 2);
-            }
-            else {
-                text = `# Terapist Profili\n\n${therapistToMarkdown(therapist)}`;
-            }
-            return {
-                content: [{ type: "text", text }],
-                structuredContent: therapist,
-            };
-        }
-        catch (error) {
-            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
-        }
-    });
-    // ── 2b. get_therapist_by_username ────────────────────────────────────────────
-    // Username regex — Planda usernames are ASCII identifiers like "gulcin_yilmaz".
-    // Reject anything else so it can't be smuggled into the path.
-    const USERNAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
-    const GetByUsernameInputSchema = z
-        .object({
-        username: z
-            .string()
-            .min(1)
-            .max(64)
-            .regex(USERNAME_REGEX, "username must be ASCII letters/digits/underscore/hyphen")
-            .describe("The therapist's username slug, e.g. \"gulcin_yilmaz\" (from find_therapists results)"),
-        response_format: z
-            .nativeEnum(ResponseFormat)
-            .default(ResponseFormat.MARKDOWN)
-            .describe('Output format: "markdown" for human-readable, "json" for structured data'),
-    })
-        .strict();
-    server.registerTool("get_therapist_by_username", {
-        title: "Get Therapist Detail by Username",
-        description: `Fetches the full profile of a single therapist by their username slug
-(e.g. "gulcin_yilmaz"). Same payload as get_therapist but keyed on the
-human-readable username instead of a numeric ID — useful when the user
-asks "<Name> hakkında detay ver" and you already have username from
-find_therapists, or when the agent wants to deep-link via [[expert:username]].
-
-Returns the same fields as get_therapist:
-  introduction_letter (Biyografi), inform (Randevu/Ücret notu), branches[]
-  with addresses + lat/lng, services[] with fees, specialties[], approaches[],
-  education (universities + departments), title, tenants[] (clinic), campaigns.
-
-⚠️ APPROACH VERIFICATION: when the user asks for a specific approach
-(BDT/CBT, EMDR, ACT, Gestalt, Schema, etc.), this tool exposes approaches[]
-just like get_therapist — same exclusion rules apply if the requested
-approach isn't listed.`,
-        inputSchema: GetByUsernameInputSchema,
-        annotations: {
-            readOnlyHint: true,
-            destructiveHint: false,
-            idempotentHint: true,
-            openWorldHint: false,
-        },
-    }, async (params) => {
-        try {
-            const raw = await getTherapistByUsername(params.username);
             const therapist = "data" in raw && raw.data ? raw.data : raw;
             let text;
             if (params.response_format === ResponseFormat.JSON) {

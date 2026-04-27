@@ -918,14 +918,16 @@ async function runHttp() {
             return;
         }
         try {
-            const { findTherapists, getTherapist, listSpecialties, getTherapistHours, getTherapistAvailableDays, } = await import("./services/therapistApi.js");
+            const { findTherapists, getTherapist, getTherapistByUsername, listSpecialties, getTherapistHours, getTherapistAvailableDays, } = await import("./services/therapistApi.js");
             let result;
             switch (tool) {
                 case "find_therapists":
                     result = await findTherapists(params);
                     break;
                 case "get_therapist":
-                    result = await getTherapist(params.id);
+                    result = params.username
+                        ? await getTherapistByUsername(params.username)
+                        : await getTherapist(params.id);
                     break;
                 case "list_specialties":
                     result = await listSpecialties();
