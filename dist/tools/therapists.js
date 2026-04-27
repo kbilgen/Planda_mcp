@@ -514,7 +514,19 @@ Error Handling:
                 ? await getTherapistByUsername(params.username)
                 : await getTherapist(params.id);
             // Handle both { data: Therapist } and bare Therapist responses
-            const therapist = "data" in raw && raw.data ? raw.data : raw;
+            // Planda standart shape'inde Therapist top-level'da gelir VE içinde
+            // ek bir `data` alt-objesi (title_id, introduction_letter, vb.) bulunur.
+            // Yani sadece "data in raw" kontrolü yetmiyor — top-level alanları
+            // (full_name / username / id / branches) varsa raw zaten Therapist'tir.
+            // Sadece düz wrapper { data: Therapist } gelirse unwrap et.
+            const candidate = raw;
+            const looksLikeTherapist = candidate.full_name !== undefined ||
+                candidate.username !== undefined ||
+                Array.isArray(candidate.branches) ||
+                Array.isArray(candidate.services);
+            const therapist = looksLikeTherapist
+                ? raw
+                : (raw.data);
             let text;
             if (params.response_format === ResponseFormat.JSON) {
                 text = JSON.stringify(therapist, null, 2);

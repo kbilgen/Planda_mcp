@@ -111,14 +111,19 @@ async function fetchApproaches(id: string | number): Promise<Approach[]> {
   if (cached) return cached;
   try {
     const raw = (await getTherapist(id)) as Record<string, unknown>;
-    const t: Therapist =
-      "data" in raw && raw.data && typeof raw.data === "object"
-        ? (raw.data as Therapist)
-        : (raw as unknown as Therapist);
-    const approaches = Array.isArray(t.approaches) ? t.approaches : [];
-    // Sometimes detail response wraps under raw.approaches at top-level too
-    const topLevel = (raw.approaches as Approach[] | undefined) ?? [];
-    const merged = approaches.length > 0 ? approaches : topLevel;
+    // Planda's standard detail shape has Therapist fields at the top level
+    // AND a nested `data` sub-object with extras (title_id, introduction_letter,
+    // etc). approaches[] lives at the top level, so prefer raw.approaches and
+    // only unwrap raw.data if the response is a thin { data: Therapist } wrapper.
+    const looksLikeTherapist =
+      Array.isArray(raw.approaches) ||
+      Array.isArray(raw.branches) ||
+      typeof raw.full_name === "string" ||
+      typeof raw.username === "string";
+    const t: Therapist = looksLikeTherapist
+      ? (raw as unknown as Therapist)
+      : ((raw.data as Therapist) ?? (raw as unknown as Therapist));
+    const merged: Approach[] = Array.isArray(t.approaches) ? t.approaches : [];
     cacheSet(id, merged);
     return merged;
   } catch {
