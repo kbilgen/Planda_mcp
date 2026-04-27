@@ -58,6 +58,14 @@ let _openaiAgent = null;
 let _openaiRunner = null;
 function getOpenAIAgent() {
     if (!_openaiAgent) {
+        // requireApproval: "never" yalnızca tüm allowedTools read-only olduğu
+        // için güvenli. Yan etkili bir tool eklenirse (ör. create_appointment,
+        // cancel_appointment) object-form'a geçirin ki yazma çağrıları kullanıcı
+        // onayı gerektirsin — aksi hâlde prompt injection ile onaysız tetiklenebilir:
+        //   requireApproval: {
+        //     always: { tool_names: ["create_appointment", "cancel_appointment"] },
+        //     never:  { tool_names: ["find_therapists", "get_therapist", ...] },
+        //   }
         const mcp = hostedMcpTool({
             serverLabel: "Kaan_mcp",
             allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
