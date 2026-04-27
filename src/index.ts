@@ -641,16 +641,20 @@ async function runHttp(): Promise<void> {
   const app = express();
 
   // CORS — iOS ve AI istemcilerinin erişmesi için açık
-  const corsOrigin = process.env.CORS_ORIGIN ?? "*";
-  app.use(
-    cors({
-      origin: corsOrigin,
-      methods: ["GET", "POST", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id", "X-API-Key"],
-      exposedHeaders: ["Mcp-Session-Id"],
-    })
-  );
-  app.options("*" as string, cors() as express.RequestHandler);
+  // CORS_ORIGIN: virgülle ayrılmış liste ("https://a.com,https://b.com") veya "*".
+  // Boş bırakılırsa "*" — production'da explicit allow-list önerilir.
+  const corsRaw = (process.env.CORS_ORIGIN ?? "*").trim();
+  const corsOrigin: string | string[] = corsRaw === "*"
+    ? "*"
+    : corsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+  const corsOptions: cors.CorsOptions = {
+    origin: corsOrigin,
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id", "X-API-Key"],
+    exposedHeaders: ["Mcp-Session-Id"],
+  };
+  app.use(cors(corsOptions));
+  app.options("*" as string, cors(corsOptions) as express.RequestHandler);
   app.use(express.json({ limit: "50kb" }));
 
   // ── GET /health ──────────────────────────────────────────────────────────────

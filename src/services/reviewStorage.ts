@@ -22,7 +22,25 @@ import {
   stat,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, basename } from "node:path";
+
+/**
+ * Validate a report filename so it can be safely joined onto the storage root.
+ * Returns the safe basename, or null if the input is unsafe.
+ *
+ * Rejects: path separators, parent refs, null bytes, leading dots, and any
+ * filename that doesn't end in `.json`. Also requires basename(input) to equal
+ * the input — this catches encoded separators that decode to "/" before us.
+ */
+function safeReportFilename(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  if (!input || input.length > 128) return null;
+  if (input.includes("\0") || input.includes("/") || input.includes("\\")) return null;
+  if (input.includes("..") || input.startsWith(".")) return null;
+  if (!input.endsWith(".json")) return null;
+  if (basename(input) !== input) return null;
+  return input;
+}
 
 /**
  * Resolves the storage root. Railway sets RAILWAY_VOLUME_MOUNT_PATH when a
@@ -106,9 +124,11 @@ export async function listReports(): Promise<UploadedReport[]> {
 
 /** Fetch a report by its filename (e.g. "2026-04-25T19-00-00-000Z.json"). */
 export async function getReport(filename: string): Promise<unknown | null> {
-  // Defensive: prevent path traversal
-  if (filename.includes("/") || filename.includes("..")) return null;
-  const path = join(getStorageRoot(), "reports", filename);
+  const safe = safeReportFilename(filename);
+  if (!safe) return null;
+  const reportsDir = resolve(getStorageRoot(), "reports");
+  const path = resolve(reportsDir, safe);
+  if (!path.startsWith(reportsDir + "/") && path !== reportsDir) return null;
   if (!existsSync(path)) return null;
   const raw = await readFile(path, "utf8");
   return JSON.parse(raw);
@@ -153,6 +173,9 @@ export async function appendDecision(decision: ReviewDecision): Promise<void> {
 export async function listDecisions(
   reportFilename?: string
 ): Promise<ReviewDecision[]> {
+  if (reportFilename !== undefined && !safeReportFilename(reportFilename)) {
+    return [];
+  }
   const path = join(getStorageRoot(), DECISIONS_FILE);
   if (!existsSync(path)) return [];
   const raw = await readFile(path, "utf8");

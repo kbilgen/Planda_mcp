@@ -514,14 +514,20 @@ async function runStdio() {
 async function runHttp() {
     const app = express();
     // CORS — iOS ve AI istemcilerinin erişmesi için açık
-    const corsOrigin = process.env.CORS_ORIGIN ?? "*";
-    app.use(cors({
+    // CORS_ORIGIN: virgülle ayrılmış liste ("https://a.com,https://b.com") veya "*".
+    // Boş bırakılırsa "*" — production'da explicit allow-list önerilir.
+    const corsRaw = (process.env.CORS_ORIGIN ?? "*").trim();
+    const corsOrigin = corsRaw === "*"
+        ? "*"
+        : corsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    const corsOptions = {
         origin: corsOrigin,
         methods: ["GET", "POST", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "X-Session-Id", "X-API-Key"],
         exposedHeaders: ["Mcp-Session-Id"],
-    }));
-    app.options("*", cors());
+    };
+    app.use(cors(corsOptions));
+    app.options("*", cors(corsOptions));
     app.use(express.json({ limit: "50kb" }));
     // ── GET /health ──────────────────────────────────────────────────────────────
     app.get("/health", (_req, res) => {
