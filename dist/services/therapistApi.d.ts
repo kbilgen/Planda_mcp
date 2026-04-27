@@ -13,6 +13,9 @@ export declare function findTherapists(params: {
 export declare function getTherapist(id: string | number): Promise<Therapist | {
     data: Therapist;
 }>;
+export declare function getTherapistByUsername(username: string): Promise<Therapist | {
+    data: Therapist;
+}>;
 export declare function listSpecialties(): Promise<unknown>;
 export declare function getTherapistHours(params: {
     therapist_id: string | number;

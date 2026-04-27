@@ -10,7 +10,7 @@
  */
 import { z } from "zod";
 import { handleApiError } from "../services/apiClient.js";
-import { findTherapists, getTherapist, listSpecialties as apiListSpecialties, getTherapistHours as apiGetTherapistHours, getTherapistAvailableDays as apiGetTherapistAvailableDays, getActiveCities as apiGetActiveCities, } from "../services/therapistApi.js";
+import { findTherapists, getTherapist, getTherapistByUsername, listSpecialties as apiListSpecialties, getTherapistHours as apiGetTherapistHours, getTherapistAvailableDays as apiGetTherapistAvailableDays, getActiveCities as apiGetActiveCities, } from "../services/therapistApi.js";
 import { CHARACTER_LIMIT } from "../constants.js";
 import { ResponseFormat, } from "../types.js";
 import { applyAiSideFilters } from "../services/therapistFilters.js";
@@ -216,6 +216,13 @@ function therapistToMarkdown(t, index) {
         const cleanBio = stripHtml(rawBio);
         const shortBio = cleanBio.length > 600 ? cleanBio.slice(0, 597) + "..." : cleanBio;
         lines.push(`**Biyografi:** ${shortBio}`);
+    }
+    // Randevu/ücret notu — only present on detail responses (stripped from lists)
+    const rawInform = t.data?.inform;
+    if (rawInform) {
+        const cleanInform = stripHtml(rawInform);
+        const shortInform = cleanInform.length > 600 ? cleanInform.slice(0, 597) + "..." : cleanInform;
+        lines.push(`**Randevu/Ücret Notu:** ${shortInform}`);
     }
     lines.push(""); // blank line separator
     return lines.join("\n");
@@ -481,6 +488,68 @@ Error Handling:
         try {
             const raw = await getTherapist(params.id);
             // Handle both { data: Therapist } and bare Therapist responses
+            const therapist = "data" in raw && raw.data ? raw.data : raw;
+            let text;
+            if (params.response_format === ResponseFormat.JSON) {
+                text = JSON.stringify(therapist, null, 2);
+            }
+            else {
+                text = `# Terapist Profili\n\n${therapistToMarkdown(therapist)}`;
+            }
+            return {
+                content: [{ type: "text", text }],
+                structuredContent: therapist,
+            };
+        }
+        catch (error) {
+            return { content: [{ type: "text", text: handleApiError(error) }], isError: true };
+        }
+    });
+    // ── 2b. get_therapist_by_username ────────────────────────────────────────────
+    // Username regex — Planda usernames are ASCII identifiers like "gulcin_yilmaz".
+    // Reject anything else so it can't be smuggled into the path.
+    const USERNAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+    const GetByUsernameInputSchema = z
+        .object({
+        username: z
+            .string()
+            .min(1)
+            .max(64)
+            .regex(USERNAME_REGEX, "username must be ASCII letters/digits/underscore/hyphen")
+            .describe("The therapist's username slug, e.g. \"gulcin_yilmaz\" (from find_therapists results)"),
+        response_format: z
+            .nativeEnum(ResponseFormat)
+            .default(ResponseFormat.MARKDOWN)
+            .describe('Output format: "markdown" for human-readable, "json" for structured data'),
+    })
+        .strict();
+    server.registerTool("get_therapist_by_username", {
+        title: "Get Therapist Detail by Username",
+        description: `Fetches the full profile of a single therapist by their username slug
+(e.g. "gulcin_yilmaz"). Same payload as get_therapist but keyed on the
+human-readable username instead of a numeric ID — useful when the user
+asks "<Name> hakkında detay ver" and you already have username from
+find_therapists, or when the agent wants to deep-link via [[expert:username]].
+
+Returns the same fields as get_therapist:
+  introduction_letter (Biyografi), inform (Randevu/Ücret notu), branches[]
+  with addresses + lat/lng, services[] with fees, specialties[], approaches[],
+  education (universities + departments), title, tenants[] (clinic), campaigns.
+
+⚠️ APPROACH VERIFICATION: when the user asks for a specific approach
+(BDT/CBT, EMDR, ACT, Gestalt, Schema, etc.), this tool exposes approaches[]
+just like get_therapist — same exclusion rules apply if the requested
+approach isn't listed.`,
+        inputSchema: GetByUsernameInputSchema,
+        annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        },
+    }, async (params) => {
+        try {
+            const raw = await getTherapistByUsername(params.username);
             const therapist = "data" in raw && raw.data ? raw.data : raw;
             let text;
             if (params.response_format === ResponseFormat.JSON) {

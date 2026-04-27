@@ -68,7 +68,7 @@ function getOpenAIAgent() {
         //   }
         const mcp = hostedMcpTool({
             serverLabel: "Kaan_mcp",
-            allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
+            allowedTools: ["find_therapists", "get_therapist", "get_therapist_by_username", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
             requireApproval: "never",
             serverUrl: process.env.MCP_SERVER_URL ?? "https://plandamcp-production.up.railway.app/mcp",
         });

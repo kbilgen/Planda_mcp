@@ -19,6 +19,9 @@ export async function findTherapists(params) {
 export async function getTherapist(id) {
     return makeApiRequest(`marketplace/therapists/${id}`);
 }
+export async function getTherapistByUsername(username) {
+    return makeApiRequest(`marketplace/therapists/username/${encodeURIComponent(username)}`);
+}
 export async function listSpecialties() {
     return makeApiRequest("marketplace/specialties");
 }

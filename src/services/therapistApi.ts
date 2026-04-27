@@ -27,6 +27,12 @@ export async function getTherapist(id: string | number): Promise<Therapist | { d
   return makeApiRequest<Therapist | { data: Therapist }>(`marketplace/therapists/${id}`);
 }
 
+export async function getTherapistByUsername(username: string): Promise<Therapist | { data: Therapist }> {
+  return makeApiRequest<Therapist | { data: Therapist }>(
+    `marketplace/therapists/username/${encodeURIComponent(username)}`
+  );
+}
+
 export async function listSpecialties(): Promise<unknown> {
   return makeApiRequest<unknown>("marketplace/specialties");
 }
