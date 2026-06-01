@@ -34,7 +34,7 @@ import { initSentry, Sentry } from "./sentry.js";
 import { saveReport, listReports, getReport, appendDecision, listDecisions, } from "./services/reviewStorage.js";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve as pathResolve, join as pathJoin } from "node:path";
-import { readFile as fsReadFile, existsSync as fsExistsSync } from "node:fs";
+import { readFile as fsReadFile, readFileSync as fsReadFileSync, existsSync as fsExistsSync } from "node:fs";
 // Sentry must initialize before any other import that might throw
 initSentry();
 // ─── Therapist list cache ─────────────────────────────────────────────────────
@@ -696,8 +696,24 @@ async function runHttp() {
         }
     });
     // ── GET /.well-known/openai-apps-challenge — ChatGPT domain verification ─────
+    // Token source priority:
+    //   1. OPENAI_APPS_CHALLENGE_TOKEN env var (Railway override)
+    //   2. Committed .well-known/openai-apps-challenge file (repo fallback)
+    // This is a public verification token — keeping a repo fallback guarantees
+    // the endpoint never serves an empty body if the env var is unset.
+    const WELL_KNOWN_DIR = pathResolve(dirname(__thisFile), "..", ".well-known");
+    const challengeFromFile = (() => {
+        const p = pathJoin(WELL_KNOWN_DIR, "openai-apps-challenge");
+        try {
+            return fsExistsSync(p) ? fsReadFileSync(p, "utf8").trim() : "";
+        }
+        catch {
+            return "";
+        }
+    })();
+    const challengeToken = (process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "").trim() || challengeFromFile;
     app.get("/.well-known/openai-apps-challenge", (_req, res) => {
-        res.type("text/plain").send(process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "");
+        res.type("text/plain").send(challengeToken);
     });
     // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
     //
