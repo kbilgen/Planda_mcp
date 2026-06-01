@@ -84,6 +84,62 @@ const FormatSchema = z.object({
         .default(ResponseFormat.MARKDOWN)
         .describe('Output format: "markdown" for human-readable, "json" for structured data'),
 });
+// ─── Output schemas (structuredContent) ─────────────────────────────────────
+//
+// Declared so ChatGPT/MCP clients understand each tool's result shape. Kept
+// deliberately LOOSE: the Planda API returns rich, variable records, and the
+// MCP SDK validates structuredContent against these schemas on every call —
+// a too-strict schema would turn a stray null/extra field into a tool error.
+// Strategy: document the top-level fields, allow nulls (.nullish()), and let
+// unknown keys through (.passthrough()). Heavy nested records pass as-is.
+const TherapistOutputSchema = z
+    .object({
+    id: z.union([z.number(), z.string()]).optional(),
+    full_name: z.string().nullish(),
+    username: z.string().nullish(),
+    gender: z.string().nullish(),
+})
+    .passthrough()
+    .describe("A single therapist record (additional fields passed through).");
+const FindTherapistsOutputSchema = z
+    .object({
+    total: z.number().optional().describe("Total therapists matching the query."),
+    count: z.number().optional().describe("Number of therapists in this response."),
+    page: z.number().optional(),
+    per_page: z.number().optional(),
+    has_more: z.boolean().optional(),
+    next_page: z.number().nullish(),
+    therapists: z.array(TherapistOutputSchema),
+    truncated: z.boolean().optional(),
+    truncation_message: z.string().optional(),
+})
+    .passthrough();
+const SpecialtiesOutputSchema = z
+    .object({
+    specialties: z.array(z
+        .object({
+        id: z.union([z.number(), z.string()]).optional(),
+        name: z.string().nullish(),
+    })
+        .passthrough()),
+})
+    .passthrough();
+const HoursOutputSchema = z
+    .object({
+    date: z.string().optional(),
+    slots: z.array(z.unknown()).describe("Bookable time slots (string or object)."),
+})
+    .passthrough();
+const DaysOutputSchema = z
+    .object({
+    days: z.array(z.unknown()).describe("Available dates (YYYY-MM-DD or objects)."),
+})
+    .passthrough();
+const CitiesOutputSchema = z
+    .object({
+    cities: z.array(z.string()).describe("Active city names."),
+})
+    .passthrough();
 // ─── Helper functions ─────────────────────────────────────────────────────────
 /** Strips HTML tags from introduction_letter and other HTML fields */
 function stripHtml(html) {
@@ -317,6 +373,7 @@ Examples of correct usage:
 Returns per therapist:
   full_name, username, gender, specialties[], branches[], services[], rating, bio`,
         inputSchema: ListInputSchema,
+        outputSchema: FindTherapistsOutputSchema,
         annotations: {
             readOnlyHint: true,
             destructiveHint: false,
@@ -411,6 +468,7 @@ Returns per therapist:
                             text: "Belirtilen kriterlere uygun terapist bulunamadı.",
                         },
                     ],
+                    structuredContent: output,
                 };
             }
             let text;
@@ -501,6 +559,7 @@ Error Handling:
   - "Error: Resource not found" if username/ID doesn't exist
   - On any error for approach queries → exclude this therapist`,
         inputSchema: GetInputSchema,
+        outputSchema: TherapistOutputSchema,
         annotations: {
             readOnlyHint: true,
             destructiveHint: false,
@@ -557,6 +616,7 @@ Returns:
 Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
   "İlişkisel Problemler", "Çift ve Aile Terapisi", "EMDR"`,
         inputSchema: z.object({}).strict(),
+        outputSchema: SpecialtiesOutputSchema,
         annotations: {
             readOnlyHint: true,
             destructiveHint: false,
@@ -621,6 +681,7 @@ Workflow:
 Returns:
   Array of bookable times: ["12:00", "12:30", "13:00", ...]`,
         inputSchema: HoursInputSchema,
+        outputSchema: HoursOutputSchema,
         annotations: {
             readOnlyHint: true,
             destructiveHint: false,
@@ -696,6 +757,7 @@ Args:
 Returns:
   List of available dates (YYYY-MM-DD format).`,
         inputSchema: AvailableDaysInputSchema,
+        outputSchema: DaysOutputSchema,
         annotations: {
             readOnlyHint: true,
             destructiveHint: false,
@@ -754,6 +816,7 @@ Use this to:
 Returns:
   Array of city names (Turkish, correctly capitalised).`,
         inputSchema: z.object({}).strict(),
+        outputSchema: CitiesOutputSchema,
         annotations: {
             readOnlyHint: true,
             destructiveHint: false,
@@ -769,7 +832,10 @@ Returns:
                     ? raw.data
                     : [];
             if (!cities.length) {
-                return { content: [{ type: "text", text: "Aktif şehir listesi alınamadı." }] };
+                return {
+                    content: [{ type: "text", text: "Aktif şehir listesi alınamadı." }],
+                    structuredContent: { cities: [] },
+                };
             }
             const names = cities.map((c) => {
                 if (typeof c === "string")
