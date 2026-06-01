@@ -602,10 +602,12 @@ Error Handling:
     // ── 3. list_specialties ──────────────────────────────────────────────────────
     server.registerTool("list_specialties", {
         title: "List Specialties",
-        description: `Returns all therapy specialty areas available on the Planda marketplace.
+        description: `Returns the full catalogue of therapy specialty areas on the Planda marketplace.
 
-Call this FIRST before find_therapists to identify the specialty IDs that match
-the user's stated problem. Then filter therapists by specialties[].id on the AI side.
+SECONDARY / OPTIONAL TOOL. For specialty-based searches, PREFER find_therapists with
+the specialty_name filter — it resolves specialties fuzzily and inline, so no separate
+call is needed. Use list_specialties only to browse every available specialty, or to
+look up a specific numeric specialty_id to then pass to find_therapists.
 
 Returns:
   Array of { id: number, name: string } — full specialty catalogue in Turkish.
@@ -654,19 +656,20 @@ Example names: "Kaygı(Anksiyete) ve Korku", "Depresyon", "Travma ve TSSB",
             .number()
             .int()
             .optional()
-            .describe("Branch ID to filter by location (from branches[].id in therapist data)"),
+            .describe("Strongly recommended. Branch ID to filter by location (from branches[].id in therapist data). Omitting may return incomplete/empty slots."),
         service_id: z
             .number()
             .int()
             .optional()
-            .describe("Service ID to filter by session type (from services[].id in therapist data)"),
+            .describe("Strongly recommended. Service ID to filter by session type (from services[].id in therapist data). Omitting may return incomplete/empty slots."),
     })
         .strict();
     server.registerTool("get_therapist_hours", {
         title: "Get Therapist Available Hours",
         description: `Returns bookable appointment time slots for a therapist on a specific date.
 
-⚠️ ALWAYS pass branch_id AND service_id — without both, the API returns wrong or no slots.
+branch_id and service_id are OPTIONAL but STRONGLY RECOMMENDED: pass both whenever you
+have them, since omitting them can return an incomplete or empty slot list.
   - branch_id: from therapist's branches[].id
   - service_id: from therapist's services[].id (e.g. Bireysel Terapi)
 
