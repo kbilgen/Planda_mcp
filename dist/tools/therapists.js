@@ -116,12 +116,9 @@ const FindTherapistsOutputSchema = z
     .passthrough();
 const SpecialtiesOutputSchema = z
     .object({
-    specialties: z.array(z
-        .object({
-        id: z.union([z.number(), z.string()]).optional(),
-        name: z.string().nullish(),
-    })
-        .passthrough()),
+    // z.unknown() — element shape is {id, name} in practice, but kept fully
+    // permissive so a payload variation can never fail output validation.
+    specialties: z.array(z.unknown()).describe("Specialty areas ({id, name})."),
 })
     .passthrough();
 const HoursOutputSchema = z
