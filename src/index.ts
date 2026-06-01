@@ -330,7 +330,7 @@ async function runHttp(): Promise<void> {
 
   // ── GET /.well-known/openai-apps-challenge — ChatGPT domain verification ─────
   app.get("/.well-known/openai-apps-challenge", (_req: Request, res: Response) => {
-    res.type("text/plain").send("iUHUzIITTYzklgFSG5CVOvUIvi7nACSMFL0DVxLSjdU");
+    res.type("text/plain").send("n9ClfoSCdxAZSyOPLwN4nV2_8qZy7sjT0SwbvbrDozQ");
   });
 
   // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
