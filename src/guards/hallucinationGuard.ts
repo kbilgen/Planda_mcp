@@ -145,6 +145,16 @@ export function stripPermissionTail(text: string): string {
 }
 
 /**
+ * Does the text contain therapist-card content? True when either card marker
+ * is present: a "**Name** —" bold header or an [[expert:slug]] tag. Shared by
+ * the response guards here and the Sentry turn reporter (empty-toolcalls
+ * monitoring).
+ */
+export function hasTherapistCardContent(text: string): boolean {
+  return /\*\*[^*\n]+\*\*\s*—/.test(text) || /\[\[expert:[^\]]+\]\]/.test(text);
+}
+
+/**
  * Decides whether a response should be replaced with the safe fallback based
  * on verification output. Logic (intentionally conservative):
  *
