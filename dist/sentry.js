@@ -16,6 +16,7 @@
  *   SENTRY_RELEASE       — release tag
  */
 import * as Sentry from "@sentry/node";
+import { hasTherapistCardContent } from "./guards/hallucinationGuard.js";
 let initialized = false;
 export function initSentry() {
     if (initialized)
@@ -69,12 +70,16 @@ export function reportTurnToSentry(turn) {
         return;
     const toolNames = turn.toolCalls.map((c) => c.name);
     const violationCount = turn.violations?.length ?? 0;
+    // Local in-process tools vs hosted MCP — lets Sentry dashboards compare the
+    // two modes (latency, violations, empty-toolcalls rate) side by side.
+    const toolMode = process.env.USE_LOCAL_TOOLS === "1" ? "local" : "hosted_mcp";
     Sentry.withScope((scope) => {
         scope.setTag("intent", turn.intent ?? "unknown");
         scope.setTag("endpoint", turn.endpoint ?? "unknown");
         scope.setTag("model", turn.model ?? "unknown");
         scope.setTag("has_violations", String(violationCount > 0));
         scope.setTag("tool_count", String(turn.toolCalls.length));
+        scope.setTag("tool_mode", toolMode);
         scope.setUser({ id: turn.sessionId });
         scope.setContext("turn", {
             sessionId: turn.sessionId,
@@ -98,6 +103,30 @@ export function reportTurnToSentry(turn) {
                 latencyMs: turn.latencyMs,
             },
         });
+        // ── Empty-toolcalls monitor ───────────────────────────────────────────
+        // Therapist cards in the response (or a card_without_tool_call violation
+        // — set when the guard already replaced such a response) with ZERO
+        // extracted tool calls means one of two bad things:
+        //   a) extractToolCalls stopped recognising the tool-call item shape
+        //      (e.g. after an SDK upgrade or a USE_LOCAL_TOOLS mode switch) —
+        //      every guard that keys off tool_count is then silently blind;
+        //   b) the model genuinely fabricated cards without consulting the API.
+        // Either way it needs eyes. Fires as a distinct error-level event so a
+        // Sentry alert rule can page on `kind:empty_toolcalls_with_cards`.
+        const cardViolation = (turn.violations ?? []).some((v) => v.detail === "card_without_tool_call");
+        if (turn.toolCalls.length === 0 &&
+            !turn.error &&
+            (hasTherapistCardContent(turn.response) || cardViolation)) {
+            Sentry.captureMessage("Therapist cards in response but zero tool calls extracted", {
+                level: "error",
+                tags: {
+                    kind: "empty_toolcalls_with_cards",
+                    tool_mode: toolMode,
+                    intent: turn.intent ?? "unknown",
+                    endpoint: turn.endpoint ?? "unknown",
+                },
+            });
+        }
         // Event only when something's worth flagging
         if (turn.error) {
             Sentry.captureException(new Error(turn.error), {

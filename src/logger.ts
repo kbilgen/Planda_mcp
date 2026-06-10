@@ -179,6 +179,8 @@ export function extractToolCalls(result: unknown): ToolCallLog[] {
         type.includes("mcp_call");
       const isOutput =
         type === "function_call_output" ||
+        // Local function tools (USE_LOCAL_TOOLS=1) emit this type
+        type === "function_call_result" ||
         type === "mcp_call_output" ||
         type === "hosted_tool_call_output" ||
         type.endsWith("tool_call_output_item") ||

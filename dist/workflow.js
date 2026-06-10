@@ -6,6 +6,7 @@ import { runGuardrails } from "@openai/guardrails";
 import { hostedMcpTool, Agent, Runner, withTrace } from "@openai/agents";
 import { SYSTEM_PROMPT } from "./prompts.js";
 import { extractToolCalls } from "./logger.js";
+import { buildLocalTools } from "./tools/localTools.js";
 // ─── Guardrails (optional — skipped if OPENAI_API_KEY missing) ───────────────
 let _guardrailsClient = null;
 function getGuardrailsClient() {
@@ -56,6 +57,11 @@ function withTimeout(promise, ms) {
 // ─── OpenAI Agents path ───────────────────────────────────────────────────────
 let _openaiAgent = null;
 let _openaiRunner = null;
+// USE_LOCAL_TOOLS=1 → tools run in-process (no OpenAI→/mcp round-trip per
+// call: lower latency, no dependency on our public URL being reachable).
+// Default (unset/other) → hosted MCP, the long-standing production path.
+// Flip the env var to switch modes; no code change needed to roll back.
+const USE_LOCAL_TOOLS = process.env.USE_LOCAL_TOOLS === "1";
 function getOpenAIAgent() {
     if (!_openaiAgent) {
         // requireApproval: "never" yalnızca tüm allowedTools read-only olduğu
@@ -66,17 +72,21 @@ function getOpenAIAgent() {
         //     always: { tool_names: ["create_appointment", "cancel_appointment"] },
         //     never:  { tool_names: ["find_therapists", "get_therapist", ...] },
         //   }
-        const mcp = hostedMcpTool({
-            serverLabel: "Kaan_mcp",
-            allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
-            requireApproval: "never",
-            serverUrl: process.env.MCP_SERVER_URL ?? "https://plandamcp-production.up.railway.app/mcp",
-        });
+        // (Yerel tool modunda karşılığı: tool({ needsApproval: true }).)
+        const tools = USE_LOCAL_TOOLS
+            ? buildLocalTools()
+            : [hostedMcpTool({
+                    serverLabel: "Kaan_mcp",
+                    allowedTools: ["find_therapists", "get_therapist", "list_specialties", "get_therapist_hours", "get_therapist_available_days"],
+                    requireApproval: "never",
+                    serverUrl: process.env.MCP_SERVER_URL ?? "https://plandamcp-production.up.railway.app/mcp",
+                })];
+        console.log(`[workflow] Tool mode: ${USE_LOCAL_TOOLS ? "local (in-process)" : "hosted MCP"}`);
         _openaiAgent = new Agent({
             name: "PlandaAssistant",
             instructions: SYSTEM_PROMPT,
             model: (process.env.OPENAI_MODEL ?? "gpt-4.1-mini"),
-            tools: [mcp],
+            tools,
             modelSettings: { store: true },
         });
     }

@@ -32,6 +32,13 @@ export declare const EXPLANATION_FALLBACK: string;
 export declare function detectMetaHallucination(text: string): boolean;
 export declare function stripPermissionTail(text: string): string;
 /**
+ * Does the text contain therapist-card content? True when either card marker
+ * is present: a "**Name** —" bold header or an [[expert:slug]] tag. Shared by
+ * the response guards here and the Sentry turn reporter (empty-toolcalls
+ * monitoring).
+ */
+export declare function hasTherapistCardContent(text: string): boolean;
+/**
  * Decides whether a response should be replaced with the safe fallback based
  * on verification output. Logic (intentionally conservative):
  *
