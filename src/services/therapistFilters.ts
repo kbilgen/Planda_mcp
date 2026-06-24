@@ -58,6 +58,36 @@ export function matchesGender(t: Therapist, gender: "female" | "male"): boolean 
   return g === gender;
 }
 
+/** Parse an age field that may arrive as number, numeric string, or null. */
+function parseAge(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * Therapist accepts a client of the given age.
+ *   - accept_all_ages === true                     → always matches
+ *   - otherwise within [min_client_age, max_client_age] (open-ended if a
+ *     bound is missing)
+ *   - no age data at all                           → treated as accepting
+ *     (we don't exclude a therapist for a field they never filled in)
+ */
+export function matchesAge(t: Therapist, age: number): boolean {
+  const other = t.data?.other;
+  if (!other) return true;
+  if (other.accept_all_ages) return true;
+  const min = parseAge(other.min_client_age);
+  const max = parseAge(other.max_client_age);
+  if (min === null && max === null) return true;
+  if (min !== null && age < min) return false;
+  if (max !== null && age > max) return false;
+  return true;
+}
+
 /**
  * Fuzzy name match — returns therapists whose full_name / name+surname /
  * username contains all query words (normalized, Turkish-insensitive).
@@ -135,6 +165,7 @@ export interface ApplyFiltersParams {
   max_fee?: number;
   name?: string;
   specialty_name?: string;
+  age?: number; // keeps only therapists whose accepted age range covers it
   city?: string; // used only to enforce physical-branch city match when online===false
 }
 
@@ -151,5 +182,6 @@ export function applyAiSideFilters(list: Therapist[], f: ApplyFiltersParams): Th
   if (f.online === false) out = out.filter((t) => matchesPhysical(t, f.city));
   if (f.gender) out = out.filter((t) => matchesGender(t, f.gender!));
   if (typeof f.max_fee === "number") out = out.filter((t) => matchesMaxFee(t, f.max_fee!));
+  if (typeof f.age === "number") out = out.filter((t) => matchesAge(t, f.age!));
   return out;
 }
