@@ -18,6 +18,7 @@ import { ResponseFormat, } from "../types.js";
 import { applyAiSideFilters } from "../services/therapistFilters.js";
 import { resolveLocation, therapistInDistrict, istanbulSide, matchesIstanbulSide, } from "../services/locationNormalizer.js";
 import { filterByApproachVerified } from "../services/approachVerifier.js";
+import { diversifyRanking } from "../services/therapistRanker.js";
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 const PaginationSchema = z.object({
     page: z
@@ -70,6 +71,13 @@ const FilterSchema = z.object({
         .string()
         .optional()
         .describe('Fuzzy name match (Turkish-aware, lowercased, diacritic-insensitive). Use for "X kim?" / "X bu hafta müsait mi?" lookups. Matches full_name, name+surname, and username.'),
+    age: z
+        .number()
+        .int()
+        .min(0)
+        .max(120)
+        .optional()
+        .describe('Age of the client who will attend therapy. When set, only therapists whose accepted age range (data.other.min_client_age..max_client_age, or accept_all_ages) covers this age are returned. Pass it whenever the user states or implies an age — essential for child/adolescent requests, where most adult therapists (18+) must be excluded.'),
     specialty_name: z
         .string()
         .optional()
@@ -473,6 +481,7 @@ export async function handleFindTherapists(params) {
             params.name !== undefined ||
             params.specialty_name !== undefined ||
             params.approach_name !== undefined ||
+            params.age !== undefined ||
             districtFilter !== null;
         const effectivePerPage = hasPostFilter ? Math.max(params.per_page, 200) : params.per_page;
         const raw = await findTherapists({
@@ -492,6 +501,7 @@ export async function handleFindTherapists(params) {
                 max_fee: params.max_fee,
                 name: params.name,
                 specialty_name: params.specialty_name,
+                age: params.age,
                 city: apiCity,
             });
             // District filter — only keep therapists whose branches[] touch
@@ -527,6 +537,11 @@ export async function handleFindTherapists(params) {
             }
             output = { ...output, therapists: filtered, count: filtered.length };
         }
+        // Soft-diversify ordering: keep `priority` as a boost but rotate so the
+        // same high-priority generalists don't win every query. The model picks
+        // the top 2-3 from this order, so reordering here changes who it sees.
+        // Reversible via DIVERSIFY_RANKING=0 (falls back to API priority order).
+        output = { ...output, therapists: diversifyRanking(output.therapists) };
         // Strip large bio fields before character limit check — prevents truncation of list
         output = { ...output, therapists: stripHeavyFields(output.therapists) };
         output = applyCharacterLimit(output);

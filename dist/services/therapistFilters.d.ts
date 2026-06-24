@@ -15,6 +15,15 @@ export declare function matchesMaxFee(t: Therapist, maxFee: number): boolean;
 /** Therapist's top-level or data.gender equals the requested gender. */
 export declare function matchesGender(t: Therapist, gender: "female" | "male"): boolean;
 /**
+ * Therapist accepts a client of the given age.
+ *   - accept_all_ages === true                     → always matches
+ *   - otherwise within [min_client_age, max_client_age] (open-ended if a
+ *     bound is missing)
+ *   - no age data at all                           → treated as accepting
+ *     (we don't exclude a therapist for a field they never filled in)
+ */
+export declare function matchesAge(t: Therapist, age: number): boolean;
+/**
  * Fuzzy name match — returns therapists whose full_name / name+surname /
  * username contains all query words (normalized, Turkish-insensitive).
  *
@@ -52,6 +61,7 @@ export interface ApplyFiltersParams {
     max_fee?: number;
     name?: string;
     specialty_name?: string;
+    age?: number;
     city?: string;
 }
 /**

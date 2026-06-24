@@ -376,3 +376,117 @@ test("verifySpecialtyMatch: 'Yasta kaybım oldu' → topic=yas (true grief)", { 
     "topic detection live-checks against real roster"
   );
 });
+
+// ─── Age filter (matchesAge) ─────────────────────────────────────────────────
+
+import { matchesAge } from "../src/services/therapistFilters.js";
+
+const adultOnly: Therapist = {
+  id: 90, name: "Yetişkin", full_name: "Yetişkin Terapist",
+  data: { other: { accept_all_ages: false, min_client_age: 18, max_client_age: 65 } },
+};
+const childTeen: Therapist = {
+  id: 91, name: "Çocuk", full_name: "Çocuk Ergen Terapisti",
+  data: { other: { accept_all_ages: false, min_client_age: 6, max_client_age: 17 } },
+};
+const allAges: Therapist = {
+  id: 92, name: "Hepsi", full_name: "Tüm Yaşlar",
+  data: { other: { accept_all_ages: true } },
+};
+const noAgeData: Therapist = { id: 93, name: "Veri", full_name: "Veri Yok" };
+const stringBounds: Therapist = {
+  id: 94, name: "Metin", full_name: "String Bounds",
+  data: { other: { accept_all_ages: false, min_client_age: "18", max_client_age: "40" } },
+};
+
+test("matchesAge: 14yo excluded from 18+ therapist", () => {
+  assert.equal(matchesAge(adultOnly, 14), false);
+});
+test("matchesAge: 30yo included in 18-65 therapist", () => {
+  assert.equal(matchesAge(adultOnly, 30), true);
+});
+test("matchesAge: 14yo included in child/teen therapist", () => {
+  assert.equal(matchesAge(childTeen, 14), true);
+});
+test("matchesAge: 25yo excluded from child/teen (max 17)", () => {
+  assert.equal(matchesAge(childTeen, 25), false);
+});
+test("matchesAge: accept_all_ages always matches", () => {
+  assert.equal(matchesAge(allAges, 8), true);
+  assert.equal(matchesAge(allAges, 70), true);
+});
+test("matchesAge: no age data → not excluded", () => {
+  assert.equal(matchesAge(noAgeData, 10), true);
+});
+test("matchesAge: string bounds parsed", () => {
+  assert.equal(matchesAge(stringBounds, 41), false);
+  assert.equal(matchesAge(stringBounds, 25), true);
+});
+test("applyAiSideFilters: age filters out adult-only for a 14yo", () => {
+  const out = applyAiSideFilters([adultOnly, childTeen, allAges], { age: 14 });
+  const ids = out.map((t) => t.id).sort();
+  assert.deepEqual(ids, [91, 92]); // childTeen + allAges, not adultOnly
+});
+
+// ─── Diversification (diversifyRanking) ──────────────────────────────────────
+
+import { diversifyRanking } from "../src/services/therapistRanker.js";
+
+function roster(n: number, topPriority = 3): Therapist[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: i,
+    name: `T${i}`,
+    full_name: `Therapist ${i}`,
+    priority: i < topPriority ? 9.9 - i * 0.01 : 0,
+  }));
+}
+
+test("diversifyRanking: deterministic for a fixed seed", () => {
+  const r = roster(20);
+  const a = diversifyRanking(r, { seed: 42, enabled: true }).map((t) => t.id);
+  const b = diversifyRanking(r, { seed: 42, enabled: true }).map((t) => t.id);
+  assert.deepEqual(a, b);
+});
+
+test("diversifyRanking: different seeds → different order (rotation)", () => {
+  const r = roster(20);
+  const a = diversifyRanking(r, { seed: 1, enabled: true }).map((t) => t.id);
+  const b = diversifyRanking(r, { seed: 2, enabled: true }).map((t) => t.id);
+  assert.notDeepEqual(a, b);
+});
+
+test("diversifyRanking: priority-0 therapists can reach the top-3 across seeds", () => {
+  const r = roster(20, 3); // only ids 0,1,2 carry priority
+  let priorityZeroInTop3 = false;
+  for (let seed = 0; seed < 50; seed++) {
+    const top3 = diversifyRanking(r, { seed, enabled: true }).slice(0, 3).map((t) => t.id);
+    if (top3.some((id) => id >= 3)) { priorityZeroInTop3 = true; break; }
+  }
+  assert.ok(priorityZeroInTop3, "expected a priority-0 therapist to surface in top-3 for some seed");
+});
+
+test("diversifyRanking: priority still boosts (top-3 over many seeds favors priority set)", () => {
+  const r = roster(20, 3);
+  let priorityHits = 0;
+  const N = 200;
+  for (let seed = 0; seed < N; seed++) {
+    const top3 = diversifyRanking(r, { seed, enabled: true }).slice(0, 3).map((t) => t.id);
+    priorityHits += top3.filter((id) => id < 3).length;
+  }
+  // If priority were ignored, expected ~3*3/20 = 0.45 hits/seed. Boost should
+  // lift this clearly above pure chance.
+  const avg = priorityHits / N;
+  assert.ok(avg > 0.8, `expected priority set over-represented in top-3, got avg ${avg.toFixed(2)}`);
+});
+
+test("diversifyRanking: disabled → original order preserved", () => {
+  const r = roster(10);
+  const out = diversifyRanking(r, { enabled: false }).map((t) => t.id);
+  assert.deepEqual(out, r.map((t) => t.id));
+});
+
+test("diversifyRanking: 0 or 1 items passthrough", () => {
+  assert.deepEqual(diversifyRanking([], { seed: 1 }), []);
+  const one = roster(1);
+  assert.deepEqual(diversifyRanking(one, { seed: 1 }).map((t) => t.id), [0]);
+});

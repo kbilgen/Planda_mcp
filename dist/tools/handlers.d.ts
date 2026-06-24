@@ -30,6 +30,7 @@ export declare const ListInputSchema: z.ZodObject<{
     }>>;
     max_fee: z.ZodOptional<z.ZodNumber>;
     name: z.ZodOptional<z.ZodString>;
+    age: z.ZodOptional<z.ZodNumber>;
     specialty_name: z.ZodOptional<z.ZodString>;
     approach_name: z.ZodOptional<z.ZodString>;
     response_format: z.ZodDefault<z.ZodEnum<typeof ResponseFormat>>;

@@ -133,6 +133,22 @@ Aşağıdaki durumlarda soru sorma, direkt ilerle:
 - kullanıcı net biçimde online terapist istediğini söylediyse
 - kullanıcı belirli bir terapistin adını verdiyse
 
+YAŞ KURALI
+Terapistlerin kabul ettiği yaş aralığı farklıdır (çoğu yetişkin/18+, bir
+kısmı çocuk-ergen kabul eder). Yanlış yaş grubuna terapist önermemek için:
+- Mesajda "çocuğum / oğlum / kızım / ergen / yeğenim / öğrencim" gibi bir
+  BAŞKASI (özellikle reşit olmayan biri) sinyali varsa ve yaş belirtilmemişse
+  → tek takip sorusu olarak yaşı sor: "Terapi görecek kişi kaç yaşında?"
+- Yaş öğrenildiğinde find_therapists'e age parametresi olarak geç. Sunucu
+  kabul aralığına uymayanları otomatik eler — sen ayrıca eleme yapma.
+- Kullanıcı açıkça kendisi (yetişkin) için arıyorsa yaş sorma; age göndermeden
+  devam et. Gereksiz yaş sorusu sorma.
+- Mesajda yaş zaten varsa ("14 yaşındaki kızım", "16'lık") tekrar sorma,
+  doğrudan age parametresine koy.
+- Yaş, "en fazla 1 takip sorusu" kuralına dahildir: şehir VE yaşın ikisi de
+  eksikse, eşleşmeyi daha çok etkileyeni tek seferde sor (çocuk/ergen
+  sinyalinde yaş önceliklidir).
+
 ŞEHİR KURALI
 - Kullanıcı şehir belirtmediyse ASLA şehir tahmin etme.
 - Kullanıcı kesin olarak sadece online istiyorsa şehir sorma.
@@ -239,10 +255,12 @@ Kullanıcı terapist önerisi, şehir bazlı arama, uzmanlık, bütçe, cinsiyet
     online          → true / false
     gender          → "female" | "male"
     max_fee         → TL bütçe tavanı
+    age             → terapiye girecek kişinin yaşı (sunucu, yaş aralığına uymayan terapistleri eler)
 - "Anksiyete için terapist" → { specialty_name: "anksiyete" }
 - "Sadece online" → { online: true } (city gönderme)
 - "İstanbul'da kadın terapist" → { city: "İstanbul", gender: "female" }
 - "1500 TL altı Ankara'da kaygı için" → { city: "Ankara", max_fee: 1500, specialty_name: "kaygı" }
+- "14 yaşındaki kızım için kaygı, online" → { specialty_name: "kaygı", online: true, age: 14 }
 - AI-tarafı filtreleme YAPMA: tool gerekli filtreyi kendi uygular.
 - list_specialties çağırma ihtiyacı SADECE kullanıcı "ne tür uzmanlık var?" dediğinde vardır.
 
@@ -504,5 +522,15 @@ export const FEW_SHOT_EXAMPLES = [
     user: "Ekin Alankuş kim?",
     assistant_behavior:
       "Bu bir isim sorgusu. City sormadan find_therapists(per_page=500) kullan, kişiyi bul, bilgiyi düz metin ver ve [[expert:username]] ekle.",
+  },
+  {
+    user: "Çocuğum için terapist arıyorum",
+    assistant_behavior:
+      "Başkası (çocuk) sinyali var ama yaş yok. Tek takip sorusu olarak yaşı sor: 'Çocuğunuz kaç yaşında?'. Yaş gelince find_therapists'e age parametresiyle geç; sunucu uygun yaş grubunu eler.",
+  },
+  {
+    user: "16 yaşındaki oğlum için İstanbul'da depresyon terapisti",
+    assistant_behavior:
+      "Yaş, şehir, problem net. Soru sormadan find_therapists({ city:'İstanbul', specialty_name:'depresyon', age:16 }). Yaş zaten verildi, tekrar sorma.",
   },
 ];
