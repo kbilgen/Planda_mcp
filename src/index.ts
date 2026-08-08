@@ -51,6 +51,7 @@ import {
   stripPermissionTail,
 } from "./guards/hallucinationGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
+import { createServerCardProvider, DEFAULT_MCP_ENDPOINT } from "./serverCard.js";
 import {
   saveReport,
   listReports,
@@ -836,6 +837,32 @@ async function runHttp(): Promise<void> {
 
   app.get("/.well-known/openai-apps-challenge", (_req: Request, res: Response) => {
     res.type("text/plain").send(challengeToken);
+  });
+
+  // ── GET /.well-known/mcp/server-card.json — SEP-1649 discovery ──────────────
+  // Lets clients discover protocol version, capabilities and tools without
+  // opening an MCP session. The card is introspected from a real McpServer
+  // instance (see serverCard.ts), so it can never drift from what /mcp serves.
+  //
+  // MCP_PUBLIC_URL overrides the advertised endpoint (staging, custom domain).
+  const mcpPublicUrl = (process.env.MCP_PUBLIC_URL ?? "").trim() || DEFAULT_MCP_ENDPOINT;
+  const getServerCard = createServerCardProvider(createMcpServer, {
+    endpoint: mcpPublicUrl,
+    description: "Real-time search for licensed therapists and psychologists on Planda (planda.org), Turkey's online therapy marketplace — filter by specialty, city, price and therapy approach, and check appointment availability.",
+    documentationUrl: "https://github.com/kbilgen/Planda_mcp#readme",
+    // /mcp is intentionally unauthenticated; requireApiKey guards only the
+    // chat endpoints. Keep this in sync if that ever changes.
+    authenticationRequired: false,
+  });
+
+  app.get("/.well-known/mcp/server-card.json", async (_req: Request, res: Response) => {
+    try {
+      const card = await getServerCard();
+      res.type("application/json").set("Cache-Control", "public, max-age=3600").json(card);
+    } catch (err) {
+      console.error("[planda] server-card build error:", err);
+      res.status(500).json({ error: "Failed to build server card" });
+    }
   });
 
   // ── POST /v1/assistant/chat — iOS / mobile buffered endpoint ────────────────
