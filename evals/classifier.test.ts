@@ -235,6 +235,63 @@ test("name-lookup: single capitalized word does NOT trigger (avoid 'İstanbul' f
   assert.equal(r.intent, "search_therapist");
 });
 
+// ─── Presence / lowercase name-lookup (prod regression, 2026-08-10) ──────────
+// "gülşah gürel burada mı" (all lowercase, mobile typing) classified as
+// unknown → no forced tool call → model answered from memory → guard replaced
+// the honest answer with the generic fallback. Cue-based presence detection
+// must classify these as search_therapist with an expected tool call.
+
+test("presence: 'gülşah gürel burada mı' (lowercase) → search_therapist + find_therapists", () => {
+  const r = classifyIntent("gülşah gürel burada mı");
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("presence: 'sizde ayşe demir var mı' → search_therapist", () => {
+  const r = classifyIntent("sizde ayşe demir var mı?");
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("presence: 'ekin alankuş kim' (lowercase) → search_therapist", () => {
+  const r = classifyIntent("ekin alankuş kim");
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("presence: bare 'burada mı?' without a name does NOT force a search", () => {
+  const r = classifyIntent("burada mı?");
+  assert.notEqual(r.intent, "search_therapist");
+});
+
+test("presence: availability still wins — 'gülşah gürel müsait mi' → check_availability", () => {
+  const r = classifyIntent("gülşah gürel müsait mi");
+  assert.equal(r.intent, "check_availability");
+});
+
+// ─── District specificity (prod regression, 2026-08-10) ──────────────────────
+// "bana bakırköyde uzman bul" was a vague search (expectedTools=[]) because
+// district names weren't counted as location specificity, so the tool call
+// was never forced. District mentions must now make the search actionable.
+
+test("district: 'bana bakırköyde uzman bul' → search_therapist + find_therapists", () => {
+  const r = classifyIntent("bana bakırköyde uzman bul");
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("district: 'kadıköyde psikolog arıyorum' → forced search", () => {
+  const r = classifyIntent("kadıköyde psikolog arıyorum");
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("vague search still unforced: 'kendim için psikolog arıyorum' → expectedTools=[]", () => {
+  const r = classifyIntent("kendim için psikolog arıyorum");
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, []);
+});
+
 // ─── Explanation / meta-justification requests (Sentry f7c0f3e9 regression) ──
 // The model tends to fabricate methodology when asked "how did you choose?".
 // These tests lock in the new explanation_request intent and its expectedTools.

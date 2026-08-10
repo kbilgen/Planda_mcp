@@ -53,6 +53,11 @@ export const DISTRICT_TO_CITY: Record<string, string> = {
   "beyoglu": "İstanbul",
   "sariyer": "İstanbul",
   "bakirkoy": "İstanbul",
+  "florya": "İstanbul",
+  "yesilkoy": "İstanbul",
+  "yesilyurt": "İstanbul",
+  "atakoy": "İstanbul",
+  "senlikkoy": "İstanbul",
   "bahcelievler": "İstanbul",
   "beylikduzu": "İstanbul",
   "fatih": "İstanbul",
@@ -105,6 +110,8 @@ const ISTANBUL_SIDE: Record<string, "avrupa" | "anadolu"> = {
   // Avrupa
   besiktas: "avrupa", sisli: "avrupa", beyoglu: "avrupa",
   sariyer: "avrupa", bakirkoy: "avrupa", bahcelievler: "avrupa",
+  florya: "avrupa", yesilkoy: "avrupa", yesilyurt: "avrupa",
+  atakoy: "avrupa", senlikkoy: "avrupa",
   beylikduzu: "avrupa", fatih: "avrupa", zeytinburnu: "avrupa",
   basaksehir: "avrupa", esenler: "avrupa", kagithane: "avrupa",
   eyupsultan: "avrupa", nisantasi: "avrupa", etiler: "avrupa",
@@ -148,14 +155,27 @@ export function resolveLocation(input: string): ResolvedLocation {
  * so "goztepe" resolves whether the branch label is "Göztepe" (as `name`)
  * or the district appears in the free-text address.
  */
+/**
+ * İlçe → semt aliases. Branch labels often carry the semt, not the ilçe
+ * ("Florya" branch, "Şenlikköy Mah." address — both are Bakırköy), so a
+ * user asking for the ilçe must also match branches labelled by its semts.
+ */
+const DISTRICT_SUBAREAS: Record<string, string[]> = {
+  bakirkoy: ["florya", "yesilkoy", "yesilyurt", "atakoy", "senlikkoy"],
+  kadikoy: ["moda", "goztepe", "kozyatagi", "suadiye", "caddebostan", "bostanci", "fenerbahce"],
+  sisli: ["nisantasi", "mecidiyekoy"],
+  besiktas: ["etiler", "levent", "ortakoy", "bebek"],
+};
+
 export function therapistInDistrict(t: Therapist, district: string): boolean {
   const target = normTR(district);
   if (!target) return false;
+  const keywords = [target, ...(DISTRICT_SUBAREAS[target] ?? [])];
   return (t.branches ?? []).some((b) => {
     if (!b || b.type !== "physical") return false;
     const name = normTR(b.name ?? "");
     const addr = normTR(b.address ?? "");
-    return name.includes(target) || addr.includes(target);
+    return keywords.some((k) => name.includes(k) || addr.includes(k));
   });
 }
 

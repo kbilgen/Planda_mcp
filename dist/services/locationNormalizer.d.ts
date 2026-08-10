@@ -36,12 +36,6 @@ export interface ResolvedLocation {
  *   "Mersin"    → { city: "Mersin",   district: null }  (unknown → pass through)
  */
 export declare function resolveLocation(input: string): ResolvedLocation;
-/**
- * Check whether a therapist has a physical branch that matches the given
- * district keyword. Matches both `branches[].name` and `branches[].address`,
- * so "goztepe" resolves whether the branch label is "Göztepe" (as `name`)
- * or the district appears in the free-text address.
- */
 export declare function therapistInDistrict(t: Therapist, district: string): boolean;
 /**
  * When the user targets a specific İstanbul side, filter out therapists
