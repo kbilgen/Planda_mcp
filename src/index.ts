@@ -494,6 +494,54 @@ async function guardResponse(
   return { response: workingResponse, replaced: false, violations };
 }
 
+// ─── Grounded retry — rescue guard-replaced turns ────────────────────────────
+//
+// When guardResponse discards a response produced WITHOUT any tool call, the
+// failure is almost always "model answered from memory" (e.g. lowercase name
+// lookups the intent classifier used to miss). Instead of shipping the generic
+// fallback, re-run the chat once with forceToolCall=true — workflow.ts injects
+// a corrective note and retries with tools. If the second attempt is
+// tool-grounded and passes the guard, the user never sees the fallback.
+
+interface GroundedRetryResult {
+  response: string;
+  updatedHistory: ChatMessage[];
+  toolCalls?: ToolCallLog[];
+  model?: string;
+  guarded: GuardedResponse;
+}
+
+async function groundedRetry(
+  message: string,
+  history: ChatMessage[],
+  intent: IntentResult
+): Promise<GroundedRetryResult | null> {
+  try {
+    const second = await runChat({ message, history, forceToolCall: true });
+    if (!second.toolCalls?.length) return null;
+    const processed = await postProcessResponse(second.response, message);
+    const guarded = await guardResponse(
+      processed,
+      second.toolCalls.length,
+      second.toolCalls.map((c) => c.name),
+      intent,
+      message
+    );
+    if (guarded.replaced) return null;
+    console.log("[guard] grounded retry rescued the turn");
+    try {
+      Sentry.captureMessage("Guard fallback rescued by grounded retry", {
+        level: "info",
+        tags: { kind: "grounded_retry_rescue", intent: intent.intent },
+      });
+    } catch {}
+    return { ...second, response: guarded.response, guarded };
+  } catch (err) {
+    console.error("[guard] grounded retry failed:", err);
+    return null;
+  }
+}
+
 // ─── Observability pipeline ──────────────────────────────────────────────────
 //
 // Called after every chat turn (buffered + stream + legacy).
@@ -916,16 +964,25 @@ async function runHttp(): Promise<void> {
 
     const startedAt = Date.now();
     try {
-      const { response: rawResponse, updatedHistory, toolCalls, model } =
+      let { response: rawResponse, updatedHistory, toolCalls, model } =
         await runChat({ message, history, forceToolCall });
       const processed = await postProcessResponse(rawResponse, message);
-      const guarded = await guardResponse(
+      let guarded = await guardResponse(
         processed,
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
         intent,
         message
       );
+
+      // Guard discarded a tool-less answer → one grounded retry with tools.
+      if (guarded.replaced && (toolCalls?.length ?? 0) === 0) {
+        const retried = await groundedRetry(message, history, intent);
+        if (retried) {
+          ({ updatedHistory, toolCalls, model } = retried);
+          guarded = retried.guarded;
+        }
+      }
       const response = guarded.response;
 
       // Store'u async güncelle — fallback devreye girdiyse gerçek konuşmayı
@@ -1022,7 +1079,7 @@ async function runHttp(): Promise<void> {
     try {
       let fullText = "";
 
-      const { updatedHistory, toolCalls, model } = await runChatStream(
+      let { updatedHistory, toolCalls, model } = await runChatStream(
         { message, history, forceToolCall },
         {
           onStatus: (msg) => sseWrite(res, "status", { message: msg }),
@@ -1035,13 +1092,24 @@ async function runHttp(): Promise<void> {
 
       // Post-process full text (fixes Turkish names + expert tags + match block)
       const processed = await postProcessResponse(fullText, message);
-      const guarded = await guardResponse(
+      let guarded = await guardResponse(
         processed,
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
         intent,
         message
       );
+
+      // Guard discarded a tool-less answer → one grounded retry with tools.
+      // The corrected/done events below carry the rescued text to the client.
+      if (guarded.replaced && (toolCalls?.length ?? 0) === 0) {
+        sseWrite(res, "status", { message: "Bilgileri doğruluyorum…" });
+        const retried = await groundedRetry(message, history, intent);
+        if (retried) {
+          ({ updatedHistory, toolCalls, model } = retried);
+          guarded = retried.guarded;
+        }
+      }
       const response = guarded.response;
 
       // If guard or post-processing changed the text, send corrected event so
@@ -1115,14 +1183,24 @@ async function runHttp(): Promise<void> {
       });
       const rawText = (result as { output_text?: string }).output_text ?? JSON.stringify(result);
       const processed = await postProcessResponse(rawText, message);
-      const toolCalls = (result as { toolCalls?: ToolCallLog[] }).toolCalls;
-      const guarded = await guardResponse(
+      let toolCalls = (result as { toolCalls?: ToolCallLog[] }).toolCalls;
+      let model = (result as { model?: string }).model;
+      let guarded = await guardResponse(
         processed,
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
         intent,
         message
       );
+
+      // Guard discarded a tool-less answer → one grounded retry with tools.
+      if (guarded.replaced && (toolCalls?.length ?? 0) === 0) {
+        const retried = await groundedRetry(message, history ?? [], intent);
+        if (retried) {
+          ({ toolCalls, model } = retried);
+          guarded = retried.guarded;
+        }
+      }
       const text = guarded.response;
 
       observeTurn({
@@ -1131,7 +1209,7 @@ async function runHttp(): Promise<void> {
         response: text,
         toolCalls,
         latencyMs: Date.now() - startedAt,
-        model: (result as { model?: string }).model,
+        model,
         endpoint: "/api/chat",
         precomputedIntent: intent,
         precomputedViolations: guarded.violations,

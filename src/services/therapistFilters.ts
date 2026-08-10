@@ -120,9 +120,38 @@ export function filterByFuzzyName(list: Therapist[], query: string): Therapist[]
  *   filterBySpecialtyName(list, "çocuk")      → matches specialty "Çocuk Gelişimi" OR service "Çocuk Terapisi"
  *   filterBySpecialtyName(list, "çift")       → matches specialty "Çift ve Aile" OR service "Çift ve Evlilik Terapisi"
  */
+/**
+ * Generic role words — "uzman", "terapist", "psikolog" name the profession
+ * itself, not a specialty area. No specialty is called "Uzman", so using one
+ * of these as a specialty filter would eliminate the entire roster
+ * (prod bug: "bakırköyde uzman bul" → specialty_name="uzman" → 0 results).
+ * A query made up solely of these words is treated as "no specialty filter";
+ * mixed queries ("çocuk terapisti") keep only their meaningful words.
+ */
+const GENERIC_ROLE_WORDS = new Set([
+  "uzman", "uzmani", "uzmanlar", "uzmanlari",
+  "terapist", "terapisti", "terapistler", "terapistleri",
+  "psikolog", "psikologu", "psikologlar", "psikologlari",
+  "psikoterapist", "psikoterapisti",
+  "psikiyatr", "psikiyatrist", "psikiyatristi",
+  "danisman", "danismani", "danismanlar",
+  "doktor", "hekim", "hoca",
+]);
+
 export function filterBySpecialtyName(list: Therapist[], query: string): Therapist[] {
-  const norm = normTR(query);
+  let norm = normTR(query);
   if (norm.length < 3) return list;
+
+  // Strip generic role words. All-generic query → no-op (return unfiltered);
+  // mixed query → match on the meaningful remainder ("çocuk terapisti" → "çocuk").
+  const words = norm.split(" ").filter(Boolean);
+  const meaningful = words.filter((w) => !GENERIC_ROLE_WORDS.has(w));
+  if (meaningful.length === 0) return list;
+  if (meaningful.length < words.length) {
+    norm = meaningful.join(" ");
+    if (norm.length < 3) return list;
+  }
+
   return list.filter((t) => {
     const specMatch = (t.specialties ?? []).some((s) => {
       const n = normTR(s?.name ?? "");

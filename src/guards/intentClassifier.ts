@@ -5,6 +5,8 @@
  * regressions (e.g. therapist search intent without find_therapists call).
  */
 
+import { DISTRICT_TO_CITY } from "../services/locationNormalizer.js";
+
 const NORMALIZE = (s: string): string =>
   s.toLowerCase()
     .replace(/ş/g, "s").replace(/ğ/g, "g").replace(/ü/g, "u")
@@ -65,6 +67,38 @@ const TIME_WORDS = [
 const SEARCH_HANGI_PHRASES = [
   "hangi terapist", "hangi psikolog", "hangi uzman", "hangi danisman",
 ];
+
+// Presence-lookup cues — "X burada mı", "sizde X var mı", "X kim?".
+// The capitalized NAME_LOOKUP_RE at the bottom of classifyIntent misses
+// lowercase mobile typing ("gülşah gürel burada mı"), which left the model
+// free to answer without a tool call and then get killed by the guard
+// (prod bug, 2026-08-10). These cues run on normalized text, so casing
+// and diacritics don't matter. Multi-word phrases are substring-matched;
+// single-word cues ("kim") are word-matched to avoid "hekim"/"kimlik" hits.
+const PRESENCE_PHRASES = [
+  "burada mi", "burda mi",
+  "kayitli mi", "calisiyor mu", "hizmet veriyor mu",
+];
+const PRESENCE_WORD_CUES = ["kim", "kimdir"];
+
+// "sizde X var mı" splits the cue around the name, so the phrase list can't
+// catch it. Instead: a context word ("sizde", "planda", …) anywhere in the
+// message combined with "var mı" counts as a presence cue.
+const PRESENCE_CONTEXT_WORDS = [
+  "sizde", "planda", "plandada", "aranizda",
+  "listede", "listenizde", "burada", "burda",
+];
+
+// Words that belong to the cue/grammar, not to a therapist name — removed
+// before deciding whether a presence query actually contains a name.
+const PRESENCE_STOPWORDS = new Set([
+  "burada", "burda", "sizde", "planda", "plandada", "aranizda",
+  "listede", "listenizde", "kayitli", "calisiyor", "hizmet", "veriyor",
+  "var", "yok", "mi", "mu", "kim", "kimdir", "hala", "acaba", "peki",
+  "hic", "diye", "isimli", "adinda", "biri", "birisi", "su", "bu", "o",
+  "bey", "hanim", "hn", "dr",
+  "terapist", "psikolog", "uzman", "danisman", "doktor", "hoca",
+]);
 
 const DETAIL_KEYS = [
   "bdt", "emdr", "act", "schema", "sema", "bilissel", "davranisci",
@@ -198,6 +232,33 @@ export function classifyIntent(
     };
   }
 
+  // Presence / lowercase name-lookup: "gülşah gürel burada mı", "sizde ayşe
+  // demir var mı", "ahmet yılmaz kim?". Requires a cue AND at least one
+  // residual (non-stopword) token that can plausibly be a name — a bare
+  // "burada mı?" without a name falls through to the other branches.
+  const nClean = n.replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const cleanWords = nClean.split(" ").filter(Boolean);
+  const presenceCue =
+    PRESENCE_PHRASES.find((p) => nClean.includes(p)) ??
+    (nClean.includes("var mi") &&
+    PRESENCE_CONTEXT_WORDS.some((w) => cleanWords.includes(w))
+      ? "var mi (contextual)"
+      : null) ??
+    PRESENCE_WORD_CUES.find((c) => cleanWords.includes(c)) ??
+    null;
+  if (presenceCue) {
+    const nameWords = cleanWords.filter(
+      (w) => w.length >= 2 && !PRESENCE_STOPWORDS.has(w)
+    );
+    if (nameWords.length >= 1) {
+      return {
+        intent: "search_therapist",
+        expectedTools: ["find_therapists"],
+        matched: [presenceCue, ...nameWords.slice(0, 4)],
+      };
+    }
+  }
+
   // Search vs. detail: if both search+detail keywords present, it's a filtered
   // search ("BDT yapan terapist istiyorum"), not a detail lookup.
   const searchMatches = hasAny(n, SEARCH_KEYS);
@@ -213,8 +274,15 @@ export function classifyIntent(
     "istanbul", "ankara", "izmir", "bursa", "antalya",
     "online", "yuz yuze",
   ];
+  // District names count as location specificity too — "bakırköyde uzman bul"
+  // is as actionable as "istanbulda terapist" (the tool layer resolves the
+  // district to its parent city). Substring match tolerates Turkish locative
+  // suffixes ("bakirkoyde" contains "bakirkoy").
+  const districtMatches = Object.keys(DISTRICT_TO_CITY).filter((d) =>
+    n.includes(d)
+  );
   const specificity = hasAny(n, [...SPECIFICITY_KEYS, ...DETAIL_KEYS]);
-  const hasEnoughInfo = specificity.length > 0;
+  const hasEnoughInfo = specificity.length > 0 || districtMatches.length > 0;
 
   if (searchMatches.length && detailMatches.length) {
     return {

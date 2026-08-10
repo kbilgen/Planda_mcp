@@ -33,19 +33,6 @@ export declare function matchesAge(t: Therapist, age: number): boolean;
  *   filterByFuzzyName(list, "alankus")          → any with "alankus" in name
  */
 export declare function filterByFuzzyName(list: Therapist[], query: string): Therapist[];
-/**
- * Fuzzy specialty match — returns therapists who have at least one
- * specialty OR service whose name (Turkish-normalized) contains the query.
- *
- * Services are included because Planda's taxonomy is inconsistent: some
- * therapists have "Çocuk Gelişimi" as a specialty, others only sell
- * "Çocuk Terapisi" as a service without a matching specialty label.
- * A user asking for a "çocuk terapisti" expects both groups to surface.
- *
- *   filterBySpecialtyName(list, "anksiyete")  → matches specialty "Kaygı(Anksiyete) ve Korku"
- *   filterBySpecialtyName(list, "çocuk")      → matches specialty "Çocuk Gelişimi" OR service "Çocuk Terapisi"
- *   filterBySpecialtyName(list, "çift")       → matches specialty "Çift ve Aile" OR service "Çift ve Evlilik Terapisi"
- */
 export declare function filterBySpecialtyName(list: Therapist[], query: string): Therapist[];
 /**
  * Build a {normalized_name → specialty_id} map from a therapist list.

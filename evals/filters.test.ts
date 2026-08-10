@@ -265,6 +265,36 @@ test("filterBySpecialtyName: too-short query returns list unchanged", () => {
   assert.equal(result.length, LIST.length);
 });
 
+// ─── Generic role words (prod regression, 2026-08-10) ────────────────────────
+// "bakırköyde uzman bul" → model passed specialty_name="uzman"; no specialty
+// contains the word so the whole roster was eliminated. Generic role words
+// must be a no-op filter, and mixed queries must keep their meaningful part.
+
+test("filterBySpecialtyName: 'uzman' is a generic role word → no-op", () => {
+  const result = filterBySpecialtyName(LIST, "uzman");
+  assert.equal(result.length, LIST.length);
+});
+
+test("filterBySpecialtyName: 'terapist' / 'psikolog' are no-ops too", () => {
+  assert.equal(filterBySpecialtyName(LIST, "terapist").length, LIST.length);
+  assert.equal(filterBySpecialtyName(LIST, "psikolog").length, LIST.length);
+  assert.equal(filterBySpecialtyName(LIST, "uzman psikolog").length, LIST.length);
+});
+
+test("filterBySpecialtyName: 'çift terapisti' keeps meaningful word → matches Çift service", () => {
+  // "terapisti" is generic and stripped; "çift" matches Ayşe's "Çift Terapisi" service
+  const result = filterBySpecialtyName(LIST, "çift terapisti");
+  assert.ok(result.some((t) => t.id === 1), "Ayşe (Çift Terapisi service) must match");
+});
+
+test("applyAiSideFilters: specialty_name='uzman' composes as no-op with other filters", () => {
+  const all = applyAiSideFilters(LIST, { specialty_name: "uzman" });
+  assert.equal(all.length, LIST.length);
+  const females = applyAiSideFilters(LIST, { specialty_name: "uzman", gender: "female" });
+  assert.ok(females.every((t) => t.gender === "female"));
+  assert.ok(females.length > 0, "gender filter must still apply");
+});
+
 test("buildSpecialtyMap: extracts all unique id+name pairs", () => {
   const map = buildSpecialtyMap(LIST);
   // Kaygı(26), İlişkisel(23), Depresyon(18), İletişim(22), Travmatik(35) → 5 unique
