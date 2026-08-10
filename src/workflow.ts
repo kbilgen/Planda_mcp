@@ -282,6 +282,18 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+// Provider selection: AI_PROVIDER=claude + ANTHROPIC_API_KEY → Claude
+// (claudeWorkflow.ts, default model claude-fable-5). Anything else → the
+// long-standing OpenAI Agents path. Dynamic import keeps the Anthropic SDK
+// out of the startup path when the flag is off.
+async function runProviderChat(input: ChatInput): Promise<ChatOutput> {
+  const { isClaudeEnabled, runClaudeChat } = await import("./claudeWorkflow.js");
+  if (isClaudeEnabled()) {
+    return runClaudeChat(input);
+  }
+  return runOpenAIChat(input);
+}
+
 export async function runChat(input: ChatInput): Promise<ChatOutput> {
   const guard = await checkGuardrails(input.message);
   if (guard.blocked) {
@@ -290,7 +302,7 @@ export async function runChat(input: ChatInput): Promise<ChatOutput> {
       updatedHistory: [...input.history, { role: "user" as const, content: input.message }, { role: "assistant" as const, content: SAFE_RESPONSE }],
     };
   }
-  return withTimeout(runOpenAIChat(input), CHAT_TIMEOUT_MS);
+  return withTimeout(runProviderChat(input), CHAT_TIMEOUT_MS);
 }
 
 export async function runChatStream(input: ChatInput, callbacks: ChatStreamCallbacks): Promise<ChatOutput> {
@@ -302,7 +314,7 @@ export async function runChatStream(input: ChatInput, callbacks: ChatStreamCallb
       updatedHistory: [...input.history, { role: "user" as const, content: input.message }, { role: "assistant" as const, content: SAFE_RESPONSE }],
     };
   }
-  const result = await withTimeout(runOpenAIChat(input), CHAT_TIMEOUT_MS);
+  const result = await withTimeout(runProviderChat(input), CHAT_TIMEOUT_MS);
   callbacks.onDelta?.(result.response);
   return result;
 }

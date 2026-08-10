@@ -137,6 +137,131 @@ const DISTRICT_SUBAREAS = {
     sisli: ["nisantasi", "mecidiyekoy"],
     besiktas: ["etiler", "levent", "ortakoy", "bebek"],
 };
+/**
+ * Same-side district adjacency. LLMs recall geography probabilistically —
+ * small models routinely call Kadıköy "near Bakırköy" (opposite sides of the
+ * Bosphorus). Branch lat/lng in the Planda API is currently null, so real
+ * distance math isn't possible; this static map is the deterministic
+ * substitute. Every listed neighbour is on the same side as its key, so the
+ * Boğaz rule can never be violated by construction.
+ */
+const NEARBY_DISTRICTS = {
+    // İstanbul — Avrupa
+    bakirkoy: ["bahcelievler", "zeytinburnu", "fatih"],
+    bahcelievler: ["bakirkoy", "basaksehir", "esenler", "beylikduzu"],
+    zeytinburnu: ["bakirkoy", "fatih", "esenler"],
+    fatih: ["beyoglu", "zeytinburnu", "esenler", "bakirkoy"],
+    beyoglu: ["sisli", "besiktas", "fatih", "kagithane"],
+    sisli: ["besiktas", "beyoglu", "kagithane", "sariyer"],
+    besiktas: ["sisli", "sariyer", "beyoglu", "kagithane"],
+    sariyer: ["besiktas", "kagithane", "sisli", "eyupsultan"],
+    kagithane: ["sisli", "besiktas", "sariyer", "eyupsultan"],
+    eyupsultan: ["kagithane", "sariyer", "fatih", "esenler"],
+    esenler: ["zeytinburnu", "fatih", "basaksehir", "bahcelievler"],
+    basaksehir: ["esenler", "bahcelievler", "beylikduzu"],
+    beylikduzu: ["basaksehir", "bahcelievler", "bakirkoy"],
+    nisantasi: ["sisli", "besiktas", "beyoglu"],
+    etiler: ["besiktas", "sisli", "sariyer"],
+    levent: ["besiktas", "sisli", "sariyer"],
+    mecidiyekoy: ["sisli", "besiktas", "kagithane"],
+    florya: ["bakirkoy", "bahcelievler", "beylikduzu"],
+    yesilkoy: ["bakirkoy", "bahcelievler"],
+    yesilyurt: ["bakirkoy", "bahcelievler"],
+    atakoy: ["bakirkoy", "bahcelievler", "zeytinburnu"],
+    senlikkoy: ["bakirkoy", "bahcelievler"],
+    // İstanbul — Anadolu
+    kadikoy: ["uskudar", "atasehir", "maltepe"],
+    uskudar: ["kadikoy", "umraniye", "atasehir"],
+    atasehir: ["kadikoy", "uskudar", "umraniye", "maltepe"],
+    maltepe: ["kadikoy", "atasehir", "kartal"],
+    kartal: ["maltepe", "pendik", "atasehir"],
+    pendik: ["kartal", "tuzla", "maltepe"],
+    tuzla: ["pendik", "kartal"],
+    umraniye: ["uskudar", "atasehir", "cekmekoy"],
+    cekmekoy: ["umraniye", "uskudar", "atasehir"],
+    goztepe: ["kadikoy", "atasehir", "maltepe"],
+    "bagdat caddesi": ["kadikoy", "maltepe", "atasehir"],
+    kozyatagi: ["kadikoy", "atasehir", "maltepe"],
+    suadiye: ["kadikoy", "maltepe", "atasehir"],
+    caddebostan: ["kadikoy", "maltepe", "atasehir"],
+    moda: ["kadikoy", "uskudar", "atasehir"],
+    bostanci: ["kadikoy", "maltepe", "atasehir"],
+    fenerbahce: ["kadikoy", "atasehir", "maltepe"],
+    // Ankara
+    cankaya: ["yenimahalle", "kecioren", "mamak", "altindag", "etimesgut"],
+    yenimahalle: ["cankaya", "kecioren", "etimesgut", "sincan"],
+    kecioren: ["yenimahalle", "altindag", "cankaya"],
+    mamak: ["cankaya", "altindag", "kecioren"],
+    etimesgut: ["yenimahalle", "sincan", "cankaya"],
+    sincan: ["etimesgut", "yenimahalle"],
+    altindag: ["kecioren", "mamak", "cankaya"],
+    kizilay: ["cankaya", "altindag", "yenimahalle"],
+    tunali: ["cankaya", "kizilay"],
+    cayyolu: ["cankaya", "yenimahalle", "etimesgut"],
+    umitkoy: ["cankaya", "yenimahalle", "etimesgut"],
+    // İzmir
+    konak: ["karsiyaka", "bornova", "buca", "bayrakli", "gaziemir"],
+    karsiyaka: ["konak", "bayrakli", "cigli", "bornova"],
+    bornova: ["konak", "bayrakli", "buca", "karsiyaka"],
+    buca: ["konak", "bornova", "gaziemir"],
+    cigli: ["karsiyaka", "bayrakli"],
+    bayrakli: ["karsiyaka", "bornova", "konak"],
+    gaziemir: ["buca", "konak", "guzelbahce"],
+    alsancak: ["konak", "bayrakli", "karsiyaka"],
+    guzelbahce: ["konak", "gaziemir"],
+};
+/** Normalized district key → user-facing Turkish display name. */
+const DISTRICT_DISPLAY = {
+    kadikoy: "Kadıköy", goztepe: "Göztepe", "bagdat caddesi": "Bağdat Caddesi",
+    kozyatagi: "Kozyatağı", suadiye: "Suadiye", caddebostan: "Caddebostan",
+    moda: "Moda", bostanci: "Bostancı", uskudar: "Üsküdar",
+    atasehir: "Ataşehir", maltepe: "Maltepe", kartal: "Kartal",
+    pendik: "Pendik", tuzla: "Tuzla", cekmekoy: "Çekmeköy",
+    umraniye: "Ümraniye", fenerbahce: "Fenerbahçe",
+    besiktas: "Beşiktaş", sisli: "Şişli", beyoglu: "Beyoğlu",
+    sariyer: "Sarıyer", bakirkoy: "Bakırköy", bahcelievler: "Bahçelievler",
+    beylikduzu: "Beylikdüzü", fatih: "Fatih", zeytinburnu: "Zeytinburnu",
+    basaksehir: "Başakşehir", esenler: "Esenler", kagithane: "Kağıthane",
+    eyupsultan: "Eyüpsultan", nisantasi: "Nişantaşı", etiler: "Etiler",
+    levent: "Levent", mecidiyekoy: "Mecidiyeköy",
+    florya: "Florya", yesilkoy: "Yeşilköy", yesilyurt: "Yeşilyurt",
+    atakoy: "Ataköy", senlikkoy: "Şenlikköy",
+    cankaya: "Çankaya", yenimahalle: "Yenimahalle", kecioren: "Keçiören",
+    mamak: "Mamak", etimesgut: "Etimesgut", sincan: "Sincan",
+    altindag: "Altındağ", kizilay: "Kızılay", tunali: "Tunalı",
+    cayyolu: "Çayyolu", umitkoy: "Ümitköy",
+    konak: "Konak", karsiyaka: "Karşıyaka", bornova: "Bornova",
+    buca: "Buca", cigli: "Çiğli", bayrakli: "Bayraklı",
+    gaziemir: "Gaziemir", alsancak: "Alsancak", guzelbahce: "Güzelbahçe",
+};
+/** User-facing Turkish name for a normalized district key. */
+export function districtDisplayName(district) {
+    const key = normTR(district);
+    return DISTRICT_DISPLAY[key] ?? district;
+}
+/**
+ * Data-driven "yakın ilçe" suggestions: for each same-side neighbour of the
+ * requested district, count how many of the given therapists actually have a
+ * physical branch there. Only neighbours with at least one therapist are
+ * returned, so the model can never advertise an empty district — and never
+ * an opposite-side one, because the adjacency map is same-side only.
+ */
+export function suggestNearbyDistricts(therapists, district) {
+    const key = normTR(district);
+    const neighbours = NEARBY_DISTRICTS[key] ?? [];
+    const out = [];
+    for (const n of neighbours) {
+        const count = therapists.filter((t) => therapistInDistrict(t, n)).length;
+        if (count > 0) {
+            out.push({
+                district: n,
+                display_name: districtDisplayName(n),
+                therapist_count: count,
+            });
+        }
+    }
+    return out;
+}
 export function therapistInDistrict(t, district) {
     const target = normTR(district);
     if (!target)
