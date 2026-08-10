@@ -82,6 +82,17 @@ export const DISTRICT_TO_CITY: Record<string, string> = {
   "tunali": "Ankara",
   "cayyolu": "Ankara",
   "umitkoy": "Ankara",
+  // İstanbul — Avrupa (dış çeper)
+  "silivri": "İstanbul",
+  // Antalya (gerçek trafik: "Konyaaltına en yakın ilçede var mı", 2026-08)
+  "konyaalti": "Antalya",
+  "muratpasa": "Antalya",
+  "lara": "Antalya",
+  "kepez": "Antalya",
+  // Kocaeli (gerçek trafik: "Gebze darıca tarafı")
+  "gebze": "Kocaeli",
+  "darica": "Kocaeli",
+  "izmit": "Kocaeli",
   // İzmir
   "konak": "İzmir",
   "karsiyaka": "İzmir",
@@ -111,7 +122,7 @@ const ISTANBUL_SIDE: Record<string, "avrupa" | "anadolu"> = {
   besiktas: "avrupa", sisli: "avrupa", beyoglu: "avrupa",
   sariyer: "avrupa", bakirkoy: "avrupa", bahcelievler: "avrupa",
   florya: "avrupa", yesilkoy: "avrupa", yesilyurt: "avrupa",
-  atakoy: "avrupa", senlikkoy: "avrupa",
+  atakoy: "avrupa", senlikkoy: "avrupa", silivri: "avrupa",
   beylikduzu: "avrupa", fatih: "avrupa", zeytinburnu: "avrupa",
   basaksehir: "avrupa", esenler: "avrupa", kagithane: "avrupa",
   eyupsultan: "avrupa", nisantasi: "avrupa", etiler: "avrupa",
@@ -239,6 +250,18 @@ const NEARBY_DISTRICTS: Record<string, string[]> = {
   gaziemir: ["buca", "konak", "guzelbahce"],
   alsancak: ["konak", "bayrakli", "karsiyaka"],
   guzelbahce: ["konak", "gaziemir"],
+  // İstanbul dış çeper
+  silivri: ["beylikduzu", "basaksehir", "bahcelievler"],
+  // Antalya
+  konyaalti: ["muratpasa", "kepez", "lara"],
+  muratpasa: ["konyaalti", "lara", "kepez"],
+  lara: ["muratpasa", "konyaalti"],
+  kepez: ["muratpasa", "konyaalti"],
+  // Kocaeli — Gebze/Darıca İstanbul Anadolu çeperine bitişik, Tuzla/Pendik
+  // gerçekçi alternatiftir (şehirler arası ama coğrafi olarak yakın).
+  gebze: ["darica", "tuzla", "pendik", "izmit"],
+  darica: ["gebze", "tuzla", "pendik"],
+  izmit: ["gebze", "darica"],
 };
 
 /** Normalized district key → user-facing Turkish display name. */
@@ -264,6 +287,9 @@ const DISTRICT_DISPLAY: Record<string, string> = {
   konak: "Konak", karsiyaka: "Karşıyaka", bornova: "Bornova",
   buca: "Buca", cigli: "Çiğli", bayrakli: "Bayraklı",
   gaziemir: "Gaziemir", alsancak: "Alsancak", guzelbahce: "Güzelbahçe",
+  silivri: "Silivri",
+  konyaalti: "Konyaaltı", muratpasa: "Muratpaşa", lara: "Lara", kepez: "Kepez",
+  gebze: "Gebze", darica: "Darıca", izmit: "İzmit",
 };
 
 /** User-facing Turkish name for a normalized district key. */
