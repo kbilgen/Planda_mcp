@@ -14,7 +14,9 @@
  * Environment variables:
  *   PORT                  — HTTP port (Railway sets automatically)
  *   TRANSPORT             — "http" (default) | "stdio"
- *   OPENAI_API_KEY        — Required for chat endpoints
+ *   OPENAI_API_KEY        — Chat endpoints via OpenAI (default provider)
+ *   AI_PROVIDER           — "openai" (default) | "claude" (requires ANTHROPIC_API_KEY)
+ *   ANTHROPIC_API_KEY     — Chat endpoints via Claude (claude-fable-5)
  *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
  *   REDIS_URL             — Redis connection string for persistent sessions
  */
@@ -612,6 +614,19 @@ async function observeTurn(opts: {
   });
 }
 
+// ─── AI provider availability ───
+// Chat endpoints need at least one configured LLM provider:
+//   - OPENAI_API_KEY                          -> OpenAI Agents path (default)
+//   - AI_PROVIDER=claude + ANTHROPIC_API_KEY  -> Claude path (claude-fable-5)
+
+function hasAiProvider(): boolean {
+  if (process.env.OPENAI_API_KEY) return true;
+  return (
+    (process.env.AI_PROVIDER ?? "").toLowerCase() === "claude" &&
+    Boolean(process.env.ANTHROPIC_API_KEY)
+  );
+}
+
 // ─── API key guard ────────────────────────────────────────────────────────────
 // API_SECRET_KEY env var set → enforce on all chat endpoints.
 // Not set → open (development / backward-compat).
@@ -929,8 +944,8 @@ async function runHttp(): Promise<void> {
   //          history yoksa → session store'dan yükle
   //
   app.post("/v1/assistant/chat", requireApiKey, async (req: Request, res: Response) => {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
+    if (!hasAiProvider()) {
+      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, or AI_PROVIDER=claude + ANTHROPIC_API_KEY)" });
       return;
     }
 
@@ -1032,8 +1047,8 @@ async function runHttp(): Promise<void> {
   // iOS'ta: URLSession + EventSource ile parse edilir.
   //
   app.post("/v1/assistant/chat/stream", requireApiKey, async (req: Request, res: Response) => {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
+    if (!hasAiProvider()) {
+      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, or AI_PROVIDER=claude + ANTHROPIC_API_KEY)" });
       return;
     }
 
@@ -1156,8 +1171,8 @@ async function runHttp(): Promise<void> {
 
   // ── POST /api/chat — legacy stateless endpoint (history in body) ─────────────
   app.post("/api/chat", requireApiKey, async (req: Request, res: Response) => {
-    if (!process.env.OPENAI_API_KEY) {
-      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY)" });
+    if (!hasAiProvider()) {
+      res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, or AI_PROVIDER=claude + ANTHROPIC_API_KEY)" });
       return;
     }
 
@@ -1332,10 +1347,18 @@ process.on("unhandledRejection", (reason) => {
 console.log("[planda] Starting up — Node", process.version);
 console.log("[planda] PORT:", process.env.PORT ?? "3000 (default)");
 
-if (!process.env.OPENAI_API_KEY) {
-  console.error("[planda] FATAL: OPENAI_API_KEY must be set");
+if (!hasAiProvider()) {
+  console.error(
+    "[planda] FATAL: no AI provider configured - set OPENAI_API_KEY, or AI_PROVIDER=claude with ANTHROPIC_API_KEY"
+  );
   process.exit(1);
 }
+console.log(
+  "[planda] AI provider:",
+  (process.env.AI_PROVIDER ?? "").toLowerCase() === "claude" && process.env.ANTHROPIC_API_KEY
+    ? "claude (" + (process.env.CLAUDE_MODEL ?? "claude-fable-5") + ")"
+    : "openai (" + (process.env.OPENAI_MODEL ?? "gpt-4.1-mini") + ")"
+);
 
 const transportMode = (process.env.TRANSPORT ?? "http").toLowerCase();
 

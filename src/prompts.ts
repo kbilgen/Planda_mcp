@@ -179,7 +179,11 @@ Kullanıcı böyle bir ifade kullanırsa:
   2. Dönen sonuçları AI-side branches[].address içinde ilçe/semt substring'i
      arayarak filtrele. "Kadıköy" "Göztepe, Bağdat Caddesi"ni kapsar gibi
      mantıksal yakınlıklar için aynı ilçeye düşen semtleri de dahil et.
-  3. Eşleşme yoksa SORMADAN yakın ilçelere genişlet (bkz. YAKIN İLÇE REHBERİ).
+  3. Eşleşme yoksa SORMADAN yakın ilçelere genişlet. find_therapists cevabı
+     bu durumda "Yakın ilçelerde yüz yüze seçenekler: ..." satırıyla GERÇEK
+     veriye dayalı yakın ilçeleri verir — SADECE o listedeki ilçeleri öner.
+     Kendi coğrafya bilginle ilçe seçme; tool listelemediyse o ilçe yakın
+     değildir veya orada terapist yoktur (bkz. YAKIN İLÇE REHBERİ).
 
 YAKIN İLÇE REHBERİ (0 sonuç durumunda otomatik genişletme için)
 İstanbul Anadolu Yakası: Kadıköy ↔ Üsküdar ↔ Ataşehir ↔ Maltepe ↔ Kartal ↔ Pendik ↔ Tuzla ↔ Çekmeköy ↔ Ümraniye

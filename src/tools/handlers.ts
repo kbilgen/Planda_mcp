@@ -35,6 +35,9 @@ import {
   therapistInDistrict,
   istanbulSide,
   matchesIstanbulSide,
+  suggestNearbyDistricts,
+  districtDisplayName,
+  type NearbyDistrictSuggestion,
 } from "../services/locationNormalizer.js";
 import { filterByApproachVerified } from "../services/approachVerifier.js";
 import { diversifyRanking } from "../services/therapistRanker.js";
@@ -584,6 +587,8 @@ export async function handleFindTherapists(
     });
 
     let output = normaliseListResponse(raw, params.page, effectivePerPage);
+    let inDistrictCount: number | null = null;
+    let nearbySuggestions: NearbyDistrictSuggestion[] = [];
 
     // Server-side filters — authoritative, executed before any truncation
     // or stripping so the model never sees results that violate its ask.
@@ -604,6 +609,21 @@ export async function handleFindTherapists(
       // allowed online or unspecified, we keep online-only therapists
       // too so we can offer them as a fallback.
       if (districtFilter) {
+        // Snapshot BEFORE the district cut: nearby-district suggestions must
+        // respect every other filter (specialty/gender/fee/age) but not the
+        // district itself.
+        const beforeDistrict = filtered;
+        inDistrictCount = beforeDistrict.filter((t) =>
+          therapistInDistrict(t, districtFilter)
+        ).length;
+        if (inDistrictCount === 0) {
+          // No physical presence in the asked district — compute data-driven,
+          // same-side alternatives so the model never invents geography.
+          nearbySuggestions = suggestNearbyDistricts(
+            beforeDistrict,
+            districtFilter
+          );
+        }
         if (params.online === false) {
           filtered = filtered.filter((t) =>
             therapistInDistrict(t, districtFilter)
@@ -645,13 +665,41 @@ export async function handleFindTherapists(
     // Reversible via DIVERSIFY_RANKING=0 (falls back to API priority order).
     output = { ...output, therapists: diversifyRanking(output.therapists) };
 
+    // District metadata — surfaced in structured output so any client
+    // (MCP or in-process agent) can ground its geography on data.
+    if (districtFilter) {
+      output = {
+        ...output,
+        district_query: districtFilter,
+        district_display: districtDisplayName(districtFilter),
+        in_district_count: inDistrictCount ?? 0,
+        nearby_districts: nearbySuggestions,
+      };
+    }
+
+    // Human-readable district guidance for the model. Built once, injected
+    // into both the empty-result message and the list header.
+    const districtNote =
+      districtFilter && inDistrictCount === 0
+        ? nearbySuggestions.length
+          ? `⚠️ ${districtDisplayName(districtFilter)} içinde yüz yüze şubesi olan terapist yok. ` +
+            `Aynı yakada YAKIN ilçelerde yüz yüze seçenekler: ${nearbySuggestions
+              .map((s) => `${s.display_name} (${s.therapist_count} terapist)`)
+              .join(", ")}. ` +
+            `Bu ilçeleri ve online seçeneğini öner — başka ilçe uydurma.`
+          : `⚠️ ${districtDisplayName(districtFilter)} ve yakın ilçelerde yüz yüze şube yok. ` +
+            `Sadece online seçenekleri öner — uzak veya karşı yakadaki ilçeleri yakın diye önerme.`
+        : null;
+
     // Strip large bio fields before character limit check — prevents truncation of list
     output = { ...output, therapists: stripHeavyFields(output.therapists) };
     output = applyCharacterLimit(output);
 
     if (!output.therapists.length) {
       return {
-        text: "Belirtilen kriterlere uygun terapist bulunamadı.",
+        text:
+          "Belirtilen kriterlere uygun terapist bulunamadı." +
+          (districtNote ? `\n\n${districtNote}` : ""),
         structured: output,
       };
     }
@@ -664,6 +712,7 @@ export async function handleFindTherapists(
         `# Planda Terapist Listesi`,
         "",
         `**Toplam:** ${output.total} terapist | **Sayfa:** ${output.page} | **Gösterilen:** ${output.count}`,
+        districtNote ? `\n${districtNote}` : "",
         output.truncated ? `\n⚠️ ${output.truncation_message}` : "",
         "",
       ];

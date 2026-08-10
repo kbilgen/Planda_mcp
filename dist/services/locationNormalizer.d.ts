@@ -36,6 +36,21 @@ export interface ResolvedLocation {
  *   "Mersin"    → { city: "Mersin",   district: null }  (unknown → pass through)
  */
 export declare function resolveLocation(input: string): ResolvedLocation;
+/** User-facing Turkish name for a normalized district key. */
+export declare function districtDisplayName(district: string): string;
+export interface NearbyDistrictSuggestion {
+    district: string;
+    display_name: string;
+    therapist_count: number;
+}
+/**
+ * Data-driven "yakın ilçe" suggestions: for each same-side neighbour of the
+ * requested district, count how many of the given therapists actually have a
+ * physical branch there. Only neighbours with at least one therapist are
+ * returned, so the model can never advertise an empty district — and never
+ * an opposite-side one, because the adjacency map is same-side only.
+ */
+export declare function suggestNearbyDistricts(therapists: Therapist[], district: string): NearbyDistrictSuggestion[];
 export declare function therapistInDistrict(t: Therapist, district: string): boolean;
 /**
  * When the user targets a specific İstanbul side, filter out therapists

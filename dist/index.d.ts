@@ -14,7 +14,9 @@
  * Environment variables:
  *   PORT                  — HTTP port (Railway sets automatically)
  *   TRANSPORT             — "http" (default) | "stdio"
- *   OPENAI_API_KEY        — Required for chat endpoints
+ *   OPENAI_API_KEY        — Chat endpoints via OpenAI (default provider)
+ *   AI_PROVIDER           — "openai" (default) | "claude" (requires ANTHROPIC_API_KEY)
+ *   ANTHROPIC_API_KEY     — Chat endpoints via Claude (claude-fable-5)
  *   CORS_ORIGIN           — Allowed CORS origin (default: "*")
  *   REDIS_URL             — Redis connection string for persistent sessions
  */
