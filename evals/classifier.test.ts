@@ -292,6 +292,18 @@ test("vague search still unforced: 'kendim için psikolog arıyorum' → expecte
   assert.deepEqual(r.expectedTools, []);
 });
 
+// ─── Medication questions are out-of-scope ───────────────────────────────────
+
+test("oos: 'Hangi antidepresan daha iyi?' → out_of_scope", () => {
+  const r = classifyIntent("Hangi antidepresan daha iyi sizce, Prozac mı Cipralex mi?");
+  assert.equal(r.intent, "out_of_scope");
+});
+
+test("NOT oos: medication mention alongside a search stays search_therapist", () => {
+  const r = classifyIntent("Antidepresan kullanıyorum, depresyon için terapist önerir misin?");
+  assert.equal(r.intent, "search_therapist");
+});
+
 // ─── Explanation / meta-justification requests (Sentry f7c0f3e9 regression) ──
 // The model tends to fabricate methodology when asked "how did you choose?".
 // These tests lock in the new explanation_request intent and its expectedTools.

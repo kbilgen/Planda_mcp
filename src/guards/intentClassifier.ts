@@ -319,8 +319,15 @@ export function classifyIntent(
     return { intent: "greeting", expectedTools: [], matched: greet };
   }
 
-  // Out-of-scope heuristic: coding, law, recipes, etc.
-  const oosKeys = ["kod yaz", "recete", "tarif", "hukuk", "borsa", "python", "javascript"];
+  // Out-of-scope heuristic: coding, law, recipes, medication advice, etc.
+  // Medication phrases are deliberately specific ("hangi ilac", not bare
+  // "ilac") so "antidepresan kullanıyorum, terapist önerir misin" still
+  // classifies as search — SEARCH_KEYS are checked before this block, and a
+  // bare mention alongside a search keyword never reaches here.
+  const oosKeys = [
+    "kod yaz", "recete", "tarif", "hukuk", "borsa", "python", "javascript",
+    "antidepresan", "antipsikotik", "hangi ilac", "ilac oner", "ilac tavsiye",
+  ];
   const oos = hasAny(n, oosKeys);
   if (oos.length) return { intent: "out_of_scope", expectedTools: [], matched: oos };
 
