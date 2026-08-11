@@ -138,6 +138,36 @@ const GENERIC_ROLE_WORDS = new Set([
   "doktor", "hekim", "hoca",
 ]);
 
+/**
+ * User-language → catalogue-language synonyms. Planda's specialty taxonomy
+ * has no entry literally named "stres", "tükenmişlik" or "panik" — users say
+ * those words constantly (prod, 2026-08-11: "online" + "tükenmişlik" → two
+ * consecutive "bulunamadı" replies while kaygı therapists sat unused).
+ * Keys and values are normTR'd. Values are substrings expected to appear in
+ * specialties[].name / services[].name.
+ */
+const SPECIALTY_SYNONYMS: Record<string, string[]> = {
+  stres: ["kaygi", "duygu yonetimi"],
+  tukenmislik: ["kaygi", "kariyer", "duygu yonetimi"],
+  burnout: ["kaygi", "kariyer", "duygu yonetimi"],
+  panik: ["kaygi"],
+  okb: ["kaygi"],
+  obsesif: ["kaygi"],
+  takinti: ["kaygi"],
+  ofke: ["duygu yonetimi"],
+  sinir: ["duygu yonetimi"],
+  ozguven: ["kisisel farkindalik"],
+  degersizlik: ["kisisel farkindalik", "depresyon"],
+  mukemmeliyetcilik: ["kisisel farkindalik", "kaygi"],
+  motivasyon: ["kariyer", "kisisel farkindalik"],
+  erteleme: ["kariyer", "kisisel farkindalik"],
+  sosyofobi: ["fobi", "kaygi"],
+  ayrilik: ["iliskisel", "kayip"],
+  bosanma: ["iliskisel"],
+  kiskanclik: ["iliskisel", "baglanma"],
+  dehb: ["dikkat"],
+};
+
 export function filterBySpecialtyName(list: Therapist[], query: string): Therapist[] {
   let norm = normTR(query);
   if (norm.length < 3) return list;
@@ -152,19 +182,29 @@ export function filterBySpecialtyName(list: Therapist[], query: string): Therapi
     if (norm.length < 3) return list;
   }
 
+  // Expand with synonyms: the original phrase always stays first; each
+  // meaningful word (and the whole phrase) may add catalogue substrings.
+  const targets = new Set<string>([norm]);
+  for (const t of SPECIALTY_SYNONYMS[norm] ?? []) targets.add(t);
+  for (const w of meaningful) {
+    for (const t of SPECIALTY_SYNONYMS[w] ?? []) targets.add(t);
+  }
+
+  const matchesAnyTarget = (name: string | undefined): boolean => {
+    const n = normTR(name ?? "");
+    if (!n) return false;
+    for (const target of targets) {
+      if (n.includes(target)) return true;
+    }
+    return false;
+  };
+
   return list.filter((t) => {
-    const specMatch = (t.specialties ?? []).some((s) => {
-      const n = normTR(s?.name ?? "");
-      return n.length > 0 && n.includes(norm);
-    });
+    const specMatch = (t.specialties ?? []).some((s) => matchesAnyTarget(s?.name));
     if (specMatch) return true;
     // Fallback — some therapists expose the relevant domain only via
     // services[] (e.g. "Çocuk Terapisi" without a Çocuk specialty tag).
-    const serviceMatch = (t.services ?? []).some((s) => {
-      const n = normTR(s?.name ?? "");
-      return n.length > 0 && n.includes(norm);
-    });
-    return serviceMatch;
+    return (t.services ?? []).some((s) => matchesAnyTarget(s?.name));
   });
 }
 

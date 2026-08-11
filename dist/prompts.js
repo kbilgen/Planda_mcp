@@ -282,6 +282,10 @@ Aşağıdaki ifadeleri yaklaşık anlamlarıyla eşleştir:
 - iletişim kuramama, anlaşamama → iletişim problemleri
 - kayıp, yas, ayrılık acısı → kayıp ve yas
 - öfke, sinir, dürtüsellik → duygu yönetimi
+- stres, tükenmişlik, iş stresi, burnout → kaygı / duygu yönetimi / kariyer
+  (katalogda "stres" adlı uzmanlık YOK — specialty_name'e kullanıcının
+  kelimesini geçebilirsin, sunucu eşanlamları kendisi çevirir; ama cevabında
+  eşleşmeyi kaygı/duygu yönetimi uzmanlığı üzerinden anlat)
 - bağlanma, terk edilme, güven sorunu → bağlanma ve güven
 - anlam arayışı, kimlik karmaşası → anlam arayışı
 - uyum sorunu, yeni şehir, yabancı ortam → uyum ve adaptasyon

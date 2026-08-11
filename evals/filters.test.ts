@@ -287,6 +287,32 @@ test("filterBySpecialtyName: 'çift terapisti' keeps meaningful word → matches
   assert.ok(result.some((t) => t.id === 1), "Ayşe (Çift Terapisi service) must match");
 });
 
+// ─── Specialty synonyms (prod regression, 2026-08-11) ────────────────────────
+// "online" + "tükenmişlik" produced two consecutive 'bulunamadı' replies:
+// the catalogue has no specialty literally named stres/tükenmişlik/panik.
+// User-language terms must resolve to catalogue substrings server-side.
+
+test("filterBySpecialtyName: 'stres' resolves to Kaygı via synonym map", () => {
+  const result = filterBySpecialtyName(LIST, "stres");
+  assert.ok(result.length > 0, "stres must match kaygı-specialised therapists");
+  assert.ok(result.some((t) => t.id === 1));
+});
+
+test("filterBySpecialtyName: 'tükenmişlik' resolves via synonyms", () => {
+  const result = filterBySpecialtyName(LIST, "tükenmişlik");
+  assert.ok(result.length > 0, "tükenmişlik must not return empty");
+});
+
+test("filterBySpecialtyName: 'panik atak' resolves to Kaygı", () => {
+  const result = filterBySpecialtyName(LIST, "panik atak");
+  assert.ok(result.some((t) => t.id === 1), "panik → Kaygı(Anksiyete) ve Korku");
+});
+
+test("filterBySpecialtyName: unknown term without synonym still returns empty", () => {
+  const result = filterBySpecialtyName(LIST, "hipnoterapi");
+  assert.equal(result.length, 0, "synonym map must not weaken honest empties");
+});
+
 test("applyAiSideFilters: specialty_name='uzman' composes as no-op with other filters", () => {
   const all = applyAiSideFilters(LIST, { specialty_name: "uzman" });
   assert.equal(all.length, LIST.length);
