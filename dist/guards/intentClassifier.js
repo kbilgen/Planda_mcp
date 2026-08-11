@@ -330,6 +330,10 @@ export function detectIntentToolMismatch(intent, actualToolCalls, response) {
             "ne tür", "ne tur",
             "kaç yaş", "kac yas",
             "online mi", "yüz yüze mi", "yuz yuze mi",
+            // Indirect working-style question (DOLAYLI TARZ SORUSU) — a legitimate
+            // pre-search turn, not a missed tool call.
+            "çalışma tarzı", "calisma tarzi",
+            "hangi yaklaşım", "hangi yaklasim",
             // Meta-explanation honest-fallback phrases — when the model correctly
             // refuses to fabricate methodology and asks to re-verify instead.
             "tekrar doğrulama", "tekrar dogrulama",

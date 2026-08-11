@@ -304,6 +304,25 @@ test("NOT oos: medication mention alongside a search stays search_therapist", ()
   assert.equal(r.intent, "search_therapist");
 });
 
+// ─── Dolaylı tarz sorusu — guard uyumu ───────────────────────────────────────
+// The working-style question is a legitimate pre-search turn: the intent
+// mismatch guard must NOT flag it as a missed tool call, even when the
+// paraphrased wording doesn't end with "?".
+
+test("style question response suppresses intent-tool mismatch", () => {
+  const intent = classifyIntent("Kaygı problemim var, online terapi almak istiyorum.");
+  assert.equal(intent.intent, "search_therapist");
+  assert.ok(intent.expectedTools.length > 0, "specific search expects a tool");
+  const styleQuestion =
+    "İki çalışma tarzı var; fark etmez dersen ikisinden de önerebilirim: " +
+    "pratik ve ödevli bir yaklaşım mı, yoksa geçmişteki köklere inen bir yaklaşım mı sana daha uygun gelir?";
+  const mismatch = detectIntentToolMismatch(intent, [], styleQuestion);
+  assert.deepEqual(mismatch, [], "style question must not be treated as a missed tool call");
+  // Paraphrase without a trailing "?" still passes via the clarifier phrase
+  const paraphrase = "Sana uygun çalışma tarzı seçelim: pratik mi, keşif ağırlıklı mı. Fark etmez dersen ikisinden de önerebilirim.";
+  assert.deepEqual(detectIntentToolMismatch(intent, [], paraphrase), []);
+});
+
 // ─── Explanation / meta-justification requests (Sentry f7c0f3e9 regression) ──
 // The model tends to fabricate methodology when asked "how did you choose?".
 // These tests lock in the new explanation_request intent and its expectedTools.
