@@ -127,6 +127,41 @@ test("suggestNearbyDistricts: semt query (florya) suggests its parent-district r
   assert.ok(suggestions.some((s) => s.district === "bahcelievler"));
 });
 
+// ─── Antalya / Kocaeli / Silivri expansion (real traffic, Aug 2026) ──────────
+
+test("resolveLocation: 'Konyaaltı' → Antalya + konyaalti district", () => {
+  const r = resolveLocation("Konyaaltı");
+  assert.equal(r.city, "Antalya");
+  assert.equal(r.district, "konyaalti");
+});
+
+test("resolveLocation: 'Gebze' → Kocaeli; 'Silivri' → İstanbul (Avrupa)", () => {
+  assert.equal(resolveLocation("Gebze").city, "Kocaeli");
+  assert.equal(resolveLocation("Silivri").city, "İstanbul");
+  assert.equal(istanbulSide("silivri"), "avrupa");
+});
+
+test("suggestNearbyDistricts: konyaalti ring stays within Antalya", () => {
+  const muratpasaTherapist = {
+    id: 9,
+    full_name: "Test Muratpaşa",
+    username: "test_muratpasa",
+    branches: [
+      {
+        id: 90,
+        type: "physical",
+        name: "Muratpaşa",
+        address: "Muratpaşa Mah. Test Cad. No.3",
+        city: { id: 7, name: "Antalya" },
+      },
+    ],
+  } as Therapist;
+  const suggestions = suggestNearbyDistricts([muratpasaTherapist, kadikoyTherapist], "konyaalti");
+  const districts = suggestions.map((s) => s.district);
+  assert.ok(districts.includes("muratpasa"));
+  assert.ok(!districts.includes("kadikoy"), "İstanbul ilçesi Antalya sorgusunda önerilmez");
+});
+
 test("districtDisplayName: normalized key → Turkish display form", () => {
   assert.equal(districtDisplayName("bakirkoy"), "Bakırköy");
   assert.equal(districtDisplayName("bahcelievler"), "Bahçelievler");

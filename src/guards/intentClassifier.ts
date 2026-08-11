@@ -319,8 +319,15 @@ export function classifyIntent(
     return { intent: "greeting", expectedTools: [], matched: greet };
   }
 
-  // Out-of-scope heuristic: coding, law, recipes, etc.
-  const oosKeys = ["kod yaz", "recete", "tarif", "hukuk", "borsa", "python", "javascript"];
+  // Out-of-scope heuristic: coding, law, recipes, medication advice, etc.
+  // Medication phrases are deliberately specific ("hangi ilac", not bare
+  // "ilac") so "antidepresan kullanıyorum, terapist önerir misin" still
+  // classifies as search — SEARCH_KEYS are checked before this block, and a
+  // bare mention alongside a search keyword never reaches here.
+  const oosKeys = [
+    "kod yaz", "recete", "tarif", "hukuk", "borsa", "python", "javascript",
+    "antidepresan", "antipsikotik", "hangi ilac", "ilac oner", "ilac tavsiye",
+  ];
   const oos = hasAny(n, oosKeys);
   if (oos.length) return { intent: "out_of_scope", expectedTools: [], matched: oos };
 
@@ -390,6 +397,10 @@ export function detectIntentToolMismatch(
       "ne tür", "ne tur",
       "kaç yaş", "kac yas",
       "online mi", "yüz yüze mi", "yuz yuze mi",
+      // Indirect working-style question (DOLAYLI TARZ SORUSU) — a legitimate
+      // pre-search turn, not a missed tool call.
+      "çalışma tarzı", "calisma tarzi",
+      "hangi yaklaşım", "hangi yaklasim",
       // Meta-explanation honest-fallback phrases — when the model correctly
       // refuses to fabricate methodology and asks to re-verify instead.
       "tekrar doğrulama", "tekrar dogrulama",

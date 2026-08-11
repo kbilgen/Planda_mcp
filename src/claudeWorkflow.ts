@@ -210,6 +210,7 @@ function isClarifyingQuestion(text: string): boolean {
     "paylaşabilir", "paylasabilir", "söyleyebilir", "soyleyebilir",
     "hangi konu", "hangi şehir", "hangi sehir", "kimin için", "kimin icin",
     "kaç yaş", "kac yas", "online mi", "yüz yüze mi", "yuz yuze mi",
+    "çalışma tarzı", "calisma tarzi", "hangi yaklaşım", "hangi yaklasim",
   ].some((p) => lower.includes(p));
 }
 

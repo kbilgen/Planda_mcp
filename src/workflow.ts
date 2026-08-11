@@ -163,6 +163,9 @@ function isClarifyingQuestion(text: string): boolean {
     "kimin için", "kimin icin",
     "kaç yaş", "kac yas",
     "online mi", "yüz yüze mi", "yuz yuze mi",
+    // Indirect working-style question — legitimate pre-search turn.
+    "çalışma tarzı", "calisma tarzi",
+    "hangi yaklaşım", "hangi yaklasim",
   ];
   return clarifiers.some((p) => lower.includes(p));
 }
