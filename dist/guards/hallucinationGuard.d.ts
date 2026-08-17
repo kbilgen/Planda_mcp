@@ -69,6 +69,15 @@ export declare function shouldUseFallback(violations: HallucinationViolation[], 
  */
 export declare function verifyResponse(text: string): Promise<HallucinationViolation[]>;
 /**
+ * Topic keys the user's message points at.
+ *
+ * Two passes: exact/prefix first (unchanged semantics), then a typo-tolerant
+ * fallback that only runs when the first pass came up empty.
+ *
+ * Exported for unit tests — the typo path is the one that regressed in prod.
+ */
+export declare function extractUserTopics(userMessage: string): string[];
+/**
  * Check that every therapist recommended in the response actually covers at
  * least one topic the user asked about. Returns violations for mismatches.
  *

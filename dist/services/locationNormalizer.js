@@ -318,4 +318,54 @@ export function matchesIstanbulSide(t, requestedSide) {
     }
     return false;
 }
+// ─── Location mention detection ──────────────────────────────────────────────
+//
+// The ladder guard needs to answer one question: did the user ever say WHERE
+// they are? DISTRICT_TO_CITY only covers districts of the handful of cities
+// Planda has branches in, so a user in Trabzon would read as "no location
+// given" and get asked a question they already answered. The full province
+// list closes that gap — recognising a province we have no therapists in is
+// still strictly better than re-asking.
+/** All 81 Turkish provinces, normTR form. */
+const TR_PROVINCES = new Set([
+    "adana", "adiyaman", "afyonkarahisar", "afyon", "agri", "aksaray", "amasya",
+    "ankara", "antalya", "ardahan", "artvin", "aydin", "balikesir", "bartin",
+    "batman", "bayburt", "bilecik", "bingol", "bitlis", "bolu", "burdur",
+    "bursa", "canakkale", "cankiri", "corum", "denizli", "diyarbakir", "duzce",
+    "edirne", "elazig", "erzincan", "erzurum", "eskisehir", "gaziantep",
+    "giresun", "gumushane", "hakkari", "hatay", "igdir", "isparta", "istanbul",
+    "izmir", "kahramanmaras", "maras", "karabuk", "karaman", "kars", "kastamonu",
+    "kayseri", "kilis", "kirikkale", "kirklareli", "kirsehir", "kocaeli",
+    "izmit", "konya", "kutahya", "malatya", "manisa", "mardin", "mersin",
+    "icel", "mugla", "mus", "nevsehir", "nigde", "ordu", "osmaniye", "rize",
+    "sakarya", "adapazari", "samsun", "sanliurfa", "urfa", "siirt", "sinop",
+    "sivas", "sirnak", "tekirdag", "tokat", "trabzon", "tunceli", "usak",
+    "van", "yalova", "yozgat", "zonguldak",
+]);
+/**
+ * Does the text name a place — a province, or any district/semt we know?
+ *
+ * Word-level matching for single-token names; multi-word entries in
+ * DISTRICT_TO_CITY ("bagdat caddesi") are matched as substrings.
+ */
+export function mentionsLocation(text) {
+    const normalized = normTR(text);
+    if (!normalized)
+        return false;
+    const words = new Set(normalized.split(" ").filter(Boolean));
+    for (const w of words) {
+        if (TR_PROVINCES.has(w))
+            return true;
+    }
+    for (const district of Object.keys(DISTRICT_TO_CITY)) {
+        if (district.includes(" ")) {
+            if (normalized.includes(district))
+                return true;
+        }
+        else if (words.has(district)) {
+            return true;
+        }
+    }
+    return false;
+}
 //# sourceMappingURL=locationNormalizer.js.map

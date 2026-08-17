@@ -32,6 +32,7 @@ import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
 import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, stripPermissionTail, } from "./guards/hallucinationGuard.js";
+import { detectLadderSkip, LADDER_MODALITY_QUESTION, } from "./guards/ladderGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 import { createServerCardProvider, DEFAULT_MCP_ENDPOINT } from "./serverCard.js";
 import { saveReport, listReports, getReport, appendDecision, listDecisions, } from "./services/reviewStorage.js";
@@ -246,7 +247,7 @@ async function postProcessResponse(text, userMessage) {
     result = stripPermissionTail(result);
     return result;
 }
-async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], intent, userMessage) {
+async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], intent, userMessage, history = []) {
     const violations = [];
     // ── explanation_request hard block (NODE-1 class) ────────────────────────
     // When the user asks "nasıl seçtin" / "neye göre", the model must either
@@ -399,6 +400,47 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
         catch { }
         return { response: HALLUCINATION_FALLBACK, replaced: true, violations };
     }
+    // ── Ladder-skip check ────────────────────────────────────────────────────
+    // Runs last, on a response that already cleared every safety check: the
+    // cards are real and on-topic, but the model owed the user a SORU MERDİVENİ
+    // rung before showing them. Seen in prod as "…online ya da İstanbul'da
+    // uygun 3 terapist" — a modality AND a city the user never gave.
+    // Replacing with the rung-2 question costs one turn and keeps the
+    // recommendation grounded in what the user actually said.
+    if (userMessage) {
+        try {
+            const ladder = detectLadderSkip({
+                userMessage,
+                history,
+                response: workingResponse,
+                intent,
+            });
+            if (ladder.skipped) {
+                violations.push({ kind: "other", detail: "ladder_step_skipped" });
+                console.warn("[guard] ladder step skipped — asking modality instead");
+                try {
+                    Sentry.captureMessage("Ladder step skipped — asked modality", {
+                        level: "warning",
+                        tags: {
+                            kind: "ladder_skip",
+                            intent: intent?.intent ?? "unknown",
+                            tool_count: String(toolCallCount),
+                        },
+                    });
+                }
+                catch { }
+                return {
+                    response: LADDER_MODALITY_QUESTION,
+                    replaced: true,
+                    violations,
+                    persistAs: LADDER_MODALITY_QUESTION,
+                };
+            }
+        }
+        catch (err) {
+            console.error("[guard] detectLadderSkip error:", err);
+        }
+    }
     return { response: workingResponse, replaced: false, violations };
 }
 async function groundedRetry(message, history, intent) {
@@ -407,8 +449,10 @@ async function groundedRetry(message, history, intent) {
         if (!second.toolCalls?.length)
             return null;
         const processed = await postProcessResponse(second.response, message);
-        const guarded = await guardResponse(processed, second.toolCalls.length, second.toolCalls.map((c) => c.name), intent, message);
-        if (guarded.replaced)
+        const guarded = await guardResponse(processed, second.toolCalls.length, second.toolCalls.map((c) => c.name), intent, message, history);
+        // A ladder question is a legitimate rescue; a damage-control fallback
+        // is not — fall back to the caller's original handling for the latter.
+        if (guarded.replaced && !guarded.persistAs)
             return null;
         console.log("[guard] grounded retry rescued the turn");
         try {
@@ -816,7 +860,7 @@ async function runHttp() {
         try {
             let { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history, forceToolCall });
             const processed = await postProcessResponse(rawResponse, message);
-            let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
+            let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message, history ?? []);
             // Guard discarded a tool-less answer → one grounded retry with tools.
             if (guarded.replaced && (toolCalls?.length ?? 0) === 0) {
                 const retried = await groundedRetry(message, history, intent);
@@ -830,6 +874,16 @@ async function runHttp() {
             // geçmişe eklemeyelim (model kurgu isim ürettiği için), orijinali tut.
             if (!guarded.replaced) {
                 saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            }
+            else if (guarded.persistAs) {
+                // Guard substituted a real conversational turn (ladder question) —
+                // persist THAT, not the discarded model output, so the next turn
+                // knows the question was already asked.
+                saveHistory(sessionId, [
+                    ...history,
+                    { role: "user", content: message },
+                    { role: "assistant", content: guarded.persistAs },
+                ]).catch((err) => console.error("[planda] saveHistory error:", err));
             }
             observeTurn({
                 sessionId, userMessage: message, response,
@@ -912,7 +966,7 @@ async function runHttp() {
             });
             // Post-process full text (fixes Turkish names + expert tags + match block)
             const processed = await postProcessResponse(fullText, message);
-            let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
+            let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message, history ?? []);
             // Guard discarded a tool-less answer → one grounded retry with tools.
             // The corrected/done events below carry the rescued text to the client.
             if (guarded.replaced && (toolCalls?.length ?? 0) === 0) {
@@ -931,6 +985,16 @@ async function runHttp() {
             }
             if (!guarded.replaced) {
                 saveHistory(sessionId, updatedHistory).catch((err) => console.error("[planda] saveHistory error:", err));
+            }
+            else if (guarded.persistAs) {
+                // Guard substituted a real conversational turn (ladder question) —
+                // persist THAT, not the discarded model output, so the next turn
+                // knows the question was already asked.
+                saveHistory(sessionId, [
+                    ...history,
+                    { role: "user", content: message },
+                    { role: "assistant", content: guarded.persistAs },
+                ]).catch((err) => console.error("[planda] saveHistory error:", err));
             }
             observeTurn({
                 sessionId, userMessage: message, response,
@@ -986,7 +1050,7 @@ async function runHttp() {
             const processed = await postProcessResponse(rawText, message);
             let toolCalls = result.toolCalls;
             let model = result.model;
-            let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message);
+            let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message, history ?? []);
             // Guard discarded a tool-less answer → one grounded retry with tools.
             if (guarded.replaced && (toolCalls?.length ?? 0) === 0) {
                 const retried = await groundedRetry(message, history ?? [], intent);

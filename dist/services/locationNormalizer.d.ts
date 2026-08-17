@@ -58,4 +58,11 @@ export declare function therapistInDistrict(t: Therapist, district: string): boo
  * branches never count against a side match.
  */
 export declare function matchesIstanbulSide(t: Therapist, requestedSide: "avrupa" | "anadolu"): boolean;
+/**
+ * Does the text name a place — a province, or any district/semt we know?
+ *
+ * Word-level matching for single-token names; multi-word entries in
+ * DISTRICT_TO_CITY ("bagdat caddesi") are matched as substrings.
+ */
+export declare function mentionsLocation(text: string): boolean;
 //# sourceMappingURL=locationNormalizer.d.ts.map

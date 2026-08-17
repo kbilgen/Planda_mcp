@@ -265,12 +265,83 @@ function hasWordOrPrefix(normalized, keywords) {
         return words.some((w) => w === k || w.startsWith(k));
     });
 }
-function extractUserTopics(userMessage) {
+// ─── Typo tolerance (fallback layer) ─────────────────────────────────────────
+//
+// Prod incident: user typed "aksiyete" (missing 'n'). Exact/prefix matching
+// found no topic, extractUserTopics returned [], and verifySpecialtyMatch
+// bailed on its `topics.length === 0` fail-open guard — so the padding check
+// never ran and an off-topic therapist card shipped to the user.
+//
+// Mobile users typo constantly, so keyword matching cannot be exact-only.
+// The fallback below is deliberately narrow, because a FALSE topic prunes
+// legitimate cards:
+//   • runs ONLY when exact matching found nothing (last resort, never
+//     widens an already-successful match)
+//   • keywords shorter than 6 chars are excluded — "kaygi"/"saygi" and
+//     "yas"/"yasadim" are 1 edit apart, exactly the false-match class the
+//     word-boundary rules above were written to prevent
+//   • the first character must match — typos rarely hit position 0, and
+//     this alone rules out the "saygi" → "kaygi" family
+//   • candidate length must sit within the edit budget of the keyword
+//
+// Residual risk is asymmetric in our favour: a false topic degrades to
+// NO_MATCH_FALLBACK (we ask the user again), while the fail-open bug it
+// replaces shipped a wrong recommendation.
+const FUZZY_MIN_KEYWORD_LEN = 6;
+/** Edit budget: 2 for long keywords, 1 for mid-length ones. */
+function fuzzyBudget(len) {
+    return len >= 8 ? 2 : 1;
+}
+/** Levenshtein distance, two-row DP. Inputs here are single short words. */
+function editDistance(a, b) {
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    let cur = new Array(b.length + 1);
+    for (let i = 1; i <= a.length; i++) {
+        cur[0] = i;
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, // deletion
+            cur[j - 1] + 1, // insertion
+            prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1) // substitution
+            );
+        }
+        [prev, cur] = [cur, prev];
+    }
+    return prev[b.length];
+}
+function hasTypoMatch(normalized, keywords) {
+    const words = normalized.split(" ").filter(Boolean);
+    return keywords.some((k) => {
+        if (k.length < FUZZY_MIN_KEYWORD_LEN)
+            return false;
+        const budget = fuzzyBudget(k.length);
+        return words.some((w) => w[0] === k[0] &&
+            Math.abs(w.length - k.length) <= budget &&
+            editDistance(w, k) <= budget);
+    });
+}
+/**
+ * Topic keys the user's message points at.
+ *
+ * Two passes: exact/prefix first (unchanged semantics), then a typo-tolerant
+ * fallback that only runs when the first pass came up empty.
+ *
+ * Exported for unit tests — the typo path is the one that regressed in prod.
+ */
+export function extractUserTopics(userMessage) {
     const n = normTR(userMessage);
     const topics = [];
     for (const [key, { userWords }] of Object.entries(TOPIC_SPECIALTY_MAP)) {
         if (hasWordOrPrefix(n, userWords))
             topics.push(key);
+    }
+    if (topics.length > 0)
+        return topics;
+    for (const [key, { userWords }] of Object.entries(TOPIC_SPECIALTY_MAP)) {
+        if (hasTypoMatch(n, userWords))
+            topics.push(key);
+    }
+    if (topics.length > 0) {
+        console.warn(`[guard] topic matched via typo tolerance: ${topics.join(",")}`);
     }
     return topics;
 }

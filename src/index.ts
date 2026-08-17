@@ -52,6 +52,10 @@ import {
   injectStructuredMatchBlocks,
   stripPermissionTail,
 } from "./guards/hallucinationGuard.js";
+import {
+  detectLadderSkip,
+  LADDER_MODALITY_QUESTION,
+} from "./guards/ladderGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 import { createServerCardProvider, DEFAULT_MCP_ENDPOINT } from "./serverCard.js";
 import {
@@ -320,6 +324,17 @@ interface GuardedResponse {
   response: string;
   replaced: boolean;
   violations: GuardViolation[];
+  /**
+   * Set when `replaced` carries a legitimate conversational turn rather than
+   * a damage-control fallback.
+   *
+   * Replaced turns are normally kept OUT of history — the model fabricated
+   * something and persisting it would poison the next turn. The ladder
+   * question is the opposite case: it is a real question the user must see
+   * answered in context. Dropping it would make the assistant forget it
+   * asked, and the guard would fire again on the next turn — a loop.
+   */
+  persistAs?: string;
 }
 
 async function guardResponse(
@@ -327,7 +342,8 @@ async function guardResponse(
   toolCallCount: number,
   actualToolNames: string[] = [],
   intent?: IntentResult,
-  userMessage?: string
+  userMessage?: string,
+  history: ChatMessage[] = []
 ): Promise<GuardedResponse> {
   const violations: GuardViolation[] = [];
 
@@ -493,6 +509,46 @@ async function guardResponse(
     return { response: HALLUCINATION_FALLBACK, replaced: true, violations };
   }
 
+  // ── Ladder-skip check ────────────────────────────────────────────────────
+  // Runs last, on a response that already cleared every safety check: the
+  // cards are real and on-topic, but the model owed the user a SORU MERDİVENİ
+  // rung before showing them. Seen in prod as "…online ya da İstanbul'da
+  // uygun 3 terapist" — a modality AND a city the user never gave.
+  // Replacing with the rung-2 question costs one turn and keeps the
+  // recommendation grounded in what the user actually said.
+  if (userMessage) {
+    try {
+      const ladder = detectLadderSkip({
+        userMessage,
+        history,
+        response: workingResponse,
+        intent,
+      });
+      if (ladder.skipped) {
+        violations.push({ kind: "other", detail: "ladder_step_skipped" });
+        console.warn("[guard] ladder step skipped — asking modality instead");
+        try {
+          Sentry.captureMessage("Ladder step skipped — asked modality", {
+            level: "warning",
+            tags: {
+              kind: "ladder_skip",
+              intent: intent?.intent ?? "unknown",
+              tool_count: String(toolCallCount),
+            },
+          });
+        } catch {}
+        return {
+          response: LADDER_MODALITY_QUESTION,
+          replaced: true,
+          violations,
+          persistAs: LADDER_MODALITY_QUESTION,
+        };
+      }
+    } catch (err) {
+      console.error("[guard] detectLadderSkip error:", err);
+    }
+  }
+
   return { response: workingResponse, replaced: false, violations };
 }
 
@@ -527,9 +583,12 @@ async function groundedRetry(
       second.toolCalls.length,
       second.toolCalls.map((c) => c.name),
       intent,
-      message
+      message,
+      history
     );
-    if (guarded.replaced) return null;
+    // A ladder question is a legitimate rescue; a damage-control fallback
+    // is not — fall back to the caller's original handling for the latter.
+    if (guarded.replaced && !guarded.persistAs) return null;
     console.log("[guard] grounded retry rescued the turn");
     try {
       Sentry.captureMessage("Guard fallback rescued by grounded retry", {
@@ -987,7 +1046,8 @@ async function runHttp(): Promise<void> {
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
         intent,
-        message
+        message,
+        history ?? []
       );
 
       // Guard discarded a tool-less answer → one grounded retry with tools.
@@ -1004,6 +1064,17 @@ async function runHttp(): Promise<void> {
       // geçmişe eklemeyelim (model kurgu isim ürettiği için), orijinali tut.
       if (!guarded.replaced) {
         saveHistory(sessionId, updatedHistory).catch((err) =>
+          console.error("[planda] saveHistory error:", err)
+        );
+      } else if (guarded.persistAs) {
+        // Guard substituted a real conversational turn (ladder question) —
+        // persist THAT, not the discarded model output, so the next turn
+        // knows the question was already asked.
+        saveHistory(sessionId, [
+          ...history,
+          { role: "user", content: message },
+          { role: "assistant", content: guarded.persistAs },
+        ]).catch((err) =>
           console.error("[planda] saveHistory error:", err)
         );
       }
@@ -1112,7 +1183,8 @@ async function runHttp(): Promise<void> {
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
         intent,
-        message
+        message,
+        history ?? []
       );
 
       // Guard discarded a tool-less answer → one grounded retry with tools.
@@ -1135,6 +1207,17 @@ async function runHttp(): Promise<void> {
 
       if (!guarded.replaced) {
         saveHistory(sessionId, updatedHistory).catch((err) =>
+          console.error("[planda] saveHistory error:", err)
+        );
+      } else if (guarded.persistAs) {
+        // Guard substituted a real conversational turn (ladder question) —
+        // persist THAT, not the discarded model output, so the next turn
+        // knows the question was already asked.
+        saveHistory(sessionId, [
+          ...history,
+          { role: "user", content: message },
+          { role: "assistant", content: guarded.persistAs },
+        ]).catch((err) =>
           console.error("[planda] saveHistory error:", err)
         );
       }
@@ -1205,7 +1288,8 @@ async function runHttp(): Promise<void> {
         toolCalls?.length ?? 0,
         (toolCalls ?? []).map((c) => c.name),
         intent,
-        message
+        message,
+        history ?? []
       );
 
       // Guard discarded a tool-less answer → one grounded retry with tools.
