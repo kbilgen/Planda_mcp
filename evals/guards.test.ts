@@ -114,7 +114,7 @@ const prodHistory: ChatMessage[] = [
   },
 ];
 
-test("detectLadderSkip: flags the prod transcript", () => {
+test("detectLadderSkip: flags the prod transcript (missing modality)", () => {
   const r = detectLadderSkip({
     userMessage: "aksiyete",
     history: prodHistory,
@@ -122,9 +122,62 @@ test("detectLadderSkip: flags the prod transcript", () => {
     intent: searchIntent,
   });
   assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "modality");
+});
+
+test("detectLadderSkip: flags in-person answer without a city (rung 3a)", () => {
+  // Second prod transcript: user answered the modality question with
+  // "yüzyüze" and cards appeared without the city ever being asked.
+  const r = detectLadderSkip({
+    userMessage: "yüzyüze",
+    history: [
+      ...prodHistory,
+      { role: "user", content: "aksiyete" },
+      {
+        role: "assistant",
+        content:
+          "Sana en uygun ismi bulabilmem için tek bir şey daha sorayım: " +
+          "görüşmeleri online mı yoksa yüz yüze mi yapmayı tercih edersin?",
+      },
+    ],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "city");
+});
+
+test("detectLadderSkip: in-person + city given passes", () => {
+  const r = detectLadderSkip({
+    userMessage: "yüz yüze, Ankara'dayım",
+    history: prodHistory,
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "in_person_with_location");
+});
+
+test("detectLadderSkip: does not re-ask city right after asking it", () => {
+  const r = detectLadderSkip({
+    userMessage: "bilmiyorum, gezginim ben",
+    history: [
+      ...prodHistory,
+      { role: "user", content: "yüz yüze" },
+      {
+        role: "assistant",
+        content: "Peki, sana yakın bir isim bulmam için hangi şehirdesin?",
+      },
+    ],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "city_already_asked");
 });
 
 test("detectLadderSkip: passes when the user gave a city", () => {
+  // City + problem without modality is a HIZLI KARAR case.
   const r = detectLadderSkip({
     userMessage: "İstanbul'da kaygı için terapist",
     history: [],
@@ -136,6 +189,7 @@ test("detectLadderSkip: passes when the user gave a city", () => {
 });
 
 test("detectLadderSkip: passes when the user said online", () => {
+  // Online ends the location branch — city is irrelevant.
   const r = detectLadderSkip({
     userMessage: "online terapist arıyorum, kaygı için",
     history: [],
@@ -143,10 +197,12 @@ test("detectLadderSkip: passes when the user said online", () => {
     intent: searchIntent,
   });
   assert.equal(r.skipped, false);
-  assert.equal(r.reason, "modality_given");
+  assert.equal(r.reason, "modality_online");
 });
 
-test("detectLadderSkip: passes when modality came earlier in history", () => {
+test("detectLadderSkip: in-person from history still needs a city", () => {
+  // Modality being present is NOT enough when it's yüz yüze — rung 3a
+  // (city) is still owed. This was the second prod gap.
   const r = detectLadderSkip({
     userMessage: "aksiyete",
     history: [
@@ -156,8 +212,8 @@ test("detectLadderSkip: passes when modality came earlier in history", () => {
     response: CARDS,
     intent: searchIntent,
   });
-  assert.equal(r.skipped, false);
-  assert.equal(r.reason, "modality_given");
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "city");
 });
 
 test("detectLadderSkip: passes when the response has no cards", () => {
