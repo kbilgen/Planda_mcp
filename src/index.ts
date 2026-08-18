@@ -352,11 +352,12 @@ async function naturalLadderQuestion(
 ): Promise<string | null> {
   const notes: Record<LadderRung, string> = {
     age:
-      "[Sistem notu: Terapi görecek kişi bir çocuk/ergen ama yaşı henüz " +
-      "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
+      "[Sistem notu: Terapi görecek kişinin yaşı henüz belli değil ve yaş " +
+      "eleme için kritik. Terapist önerme, kart gösterme, tool çağırma. " +
       "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
-      "hissettir, sonra TEK soru olarak terapi görecek kişinin kaç yaşında " +
-      "olduğunu sor.]",
+      "hissettir, sonra TEK soru olarak yaşı sor — kullanıcı kendisi için " +
+      "arıyorsa doğal biçimde 'Kaç yaşındasın?', başkası içinse 'Terapi " +
+      "görecek kişi kaç yaşında?'.]",
     topic:
       "[Sistem notu: Kullanıcının hangi konuda desteğe ihtiyacı olduğu henüz " +
       "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +

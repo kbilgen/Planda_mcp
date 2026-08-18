@@ -94,8 +94,8 @@ const EXEMPT_INTENTS = new Set([
   "out_of_scope",
 ]);
 
-/** The prompt caps the ladder at 3 question turns (prompts.ts "Kurallar"). */
-const MAX_QUESTION_TURNS = 3;
+/** The prompt caps the ladder at 4 question turns (prompts.ts "Kurallar"). */
+const MAX_QUESTION_TURNS = 4;
 
 export type LadderRung = "age" | "topic" | "modality" | "city";
 
@@ -247,22 +247,21 @@ export function detectLadderSkip(opts: {
     return { skipped: false, reason: "question_budget_spent" };
   }
 
-  // ── Rung 0: age (only when a child/teen is involved) ─────────────────────
-  // Seen live: "Çocuğum için terapist arıyorum" got the modality question
-  // and — had the user not volunteered "14 yaşında" — cards would have gone
-  // out with the server's age elimination never armed.
+  // ── Age rung — age is an elimination criterion for EVERYONE ──────────────
+  // Therapists carry hard accept-age ranges in both directions (child-only
+  // AND adult caps like 24/30/35), so cards without an age mean the server's
+  // age elimination never ran. Child signal puts the rung before topic
+  // (prompt: "çocuk/ergen sinyalinde YAŞ en öne geçer"); adult flows get it
+  // after topic. Name lookups are exempt; a dodge falls through.
   const rawUserTextForAge = userTurns.join("\n");
+  const isNameLookup = NAME_PAIR_RE.test(rawUserTextForAge);
+  const ageStated =
+    AGE_STATED_RE.test(rawUserTextForAge) ||
+    (ageEverAsked(history) && userTurns.some((t) => /\b\d{1,2}\b/.test(t)));
+  const ageOwed = !ageStated && !ageEverAsked(history) && !isNameLookup;
   const childSignal = containsAny(conversation, CHILD_PHRASES);
-  if (childSignal) {
-    const ageStated =
-      AGE_STATED_RE.test(rawUserTextForAge) ||
-      (ageEverAsked(history) && userTurns.some((t) => /\b\d{1,2}\b/.test(t)));
-    if (!ageStated) {
-      if (!ageEverAsked(history)) {
-        return { skipped: true, missingRung: "age" };
-      }
-      // Asked and dodged — don't trap the user, fall through.
-    }
+  if (childSignal && ageOwed) {
+    return { skipped: true, missingRung: "age" };
   }
 
   // ── Rung 1: topic ─────────────────────────────────────────────────────────
@@ -284,6 +283,11 @@ export function detectLadderSkip(opts: {
       return { skipped: true, missingRung: "topic" };
     }
     // Asked and dodged — fall through to the modality/city rungs.
+  }
+
+  // ── Rung 2: age for everyone else (adult flows, after topic) ─────────────
+  if (ageOwed) {
+    return { skipped: true, missingRung: "age" };
   }
 
   const saidOnline = containsAny(conversation, ONLINE_PHRASES);

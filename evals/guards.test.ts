@@ -116,7 +116,7 @@ const prodHistory: ChatMessage[] = [
 
 test("detectLadderSkip: flags the prod transcript (missing modality)", () => {
   const r = detectLadderSkip({
-    userMessage: "aksiyete",
+    userMessage: "aksiyete, 28 yaşındayım",
     history: prodHistory,
     response: CARDS,
     intent: searchIntent,
@@ -132,7 +132,7 @@ test("detectLadderSkip: flags in-person answer without a city (rung 3a)", () => 
     userMessage: "yüzyüze",
     history: [
       ...prodHistory,
-      { role: "user", content: "aksiyete" },
+      { role: "user", content: "aksiyete, 28 yaşındayım" },
       {
         role: "assistant",
         content:
@@ -149,7 +149,7 @@ test("detectLadderSkip: flags in-person answer without a city (rung 3a)", () => 
 
 test("detectLadderSkip: in-person + city given passes", () => {
   const r = detectLadderSkip({
-    userMessage: "yüz yüze, Ankara'dayım",
+    userMessage: "yüz yüze, Ankara'dayım, 31 yaşındayım",
     history: prodHistory,
     response: CARDS,
     intent: searchIntent,
@@ -163,7 +163,7 @@ test("detectLadderSkip: does not re-ask city right after asking it", () => {
     userMessage: "bilmiyorum, gezginim ben",
     history: [
       ...prodHistory,
-      { role: "user", content: "yüz yüze" },
+      { role: "user", content: "yüz yüze, 40 yaşındayım" },
       {
         role: "assistant",
         content: "Peki, sana yakın bir isim bulmam için hangi şehirdesin?",
@@ -176,10 +176,23 @@ test("detectLadderSkip: does not re-ask city right after asking it", () => {
   assert.equal(r.reason, "city_already_asked");
 });
 
+test("detectLadderSkip: adult flow without an age flags the age rung", () => {
+  // Age caps go both ways (child-only AND 24/30/35 adult caps), so even a
+  // complete-looking fast flow owes the age question before cards.
+  const r0 = detectLadderSkip({
+    userMessage: "İstanbul'da kaygı için terapist",
+    history: [],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r0.skipped, true);
+  assert.equal(r0.missingRung, "age");
+});
+
 test("detectLadderSkip: passes when the user gave a city", () => {
   // City + problem without modality is a HIZLI KARAR case.
   const r = detectLadderSkip({
-    userMessage: "İstanbul'da kaygı için terapist",
+    userMessage: "İstanbul'da kaygı için terapist, 35 yaşındayım",
     history: [],
     response: CARDS,
     intent: searchIntent,
@@ -191,7 +204,7 @@ test("detectLadderSkip: passes when the user gave a city", () => {
 test("detectLadderSkip: passes when the user said online", () => {
   // Online ends the location branch — city is irrelevant.
   const r = detectLadderSkip({
-    userMessage: "online terapist arıyorum, kaygı için",
+    userMessage: "online terapist arıyorum, kaygı için, 29 yaşındayım",
     history: [],
     response: CARDS,
     intent: searchIntent,
@@ -204,7 +217,7 @@ test("detectLadderSkip: in-person from history still needs a city", () => {
   // Modality being present is NOT enough when it's yüz yüze — rung 3a
   // (city) is still owed. This was the second prod gap.
   const r = detectLadderSkip({
-    userMessage: "aksiyete",
+    userMessage: "aksiyete, 30 yaşındayım",
     history: [
       { role: "user", content: "yüz yüze görüşmek istiyorum" },
       { role: "assistant", content: "Seni en çok zorlayan konu ne?" },
@@ -281,7 +294,7 @@ test("detectLadderSkip: question budget resets after a delivered recommendation"
   assert.notEqual(r.reason, "question_budget_spent");
 });
 
-test("detectLadderSkip: passes once the 3-question budget is spent", () => {
+test("detectLadderSkip: passes once the 4-question budget is spent", () => {
   const r = detectLadderSkip({
     userMessage: "bilmiyorum",
     history: [
@@ -290,6 +303,8 @@ test("detectLadderSkip: passes once the 3-question budget is spent", () => {
       { role: "user", content: "kaygı" },
       { role: "assistant", content: "Terapi görecek kişi kaç yaşında?" },
       { role: "user", content: "30" },
+      { role: "assistant", content: "Online mı yüz yüze mi tercih edersin?" },
+      { role: "user", content: "hmm" },
       { role: "assistant", content: "Bütçen nedir?" },
     ],
     response: CARDS,
@@ -324,7 +339,7 @@ test("detectLadderSkip: modality dodge with topic known does not re-ask", () => 
   const r = detectLadderSkip({
     userMessage: "hmm bilmiyorum ki",
     history: [
-      { role: "user", content: "depresyondayım, psikolog arıyorum" },
+      { role: "user", content: "depresyondayım, 33 yaşındayım, psikolog arıyorum" },
       {
         role: "assistant",
         content: "Görüşmeleri online mı yoksa yüz yüze mi tercih edersin?",
@@ -424,18 +439,27 @@ test("detectLadderSkip: topic dodge falls through to the other rungs", () => {
     intent: searchIntent,
   });
   assert.equal(r.skipped, true);
-  assert.equal(r.missingRung, "modality");
+  assert.equal(r.missingRung, "age");
 });
 
-test("detectLadderSkip: approach query needs no topic", () => {
+test("detectLadderSkip: approach query needs no topic, but still owes an age", () => {
   const r = detectLadderSkip({
     userMessage: "online bdt terapisti arıyorum",
     history: [],
     response: CARDS,
     intent: searchIntent,
   });
-  assert.equal(r.skipped, false);
-  assert.equal(r.reason, "modality_online");
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "age");
+
+  const aged = detectLadderSkip({
+    userMessage: "online bdt terapisti arıyorum, 26 yaşındayım",
+    history: [],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(aged.skipped, false);
+  assert.equal(aged.reason, "modality_online");
 });
 
 test("detectLadderSkip: name lookup needs no topic", () => {
