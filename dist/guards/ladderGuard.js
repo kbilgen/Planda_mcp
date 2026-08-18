@@ -98,8 +98,25 @@ function lastTurnAsked(history, rung) {
     }
     return false;
 }
+/**
+ * Question turns spent in the CURRENT search flow, not the whole session.
+ *
+ * The prompt's 3-question cap is per search ("sonuca ulaşana kadar TOPLAMDA
+ * en fazla 3 soru turu") — a delivered recommendation ends that flow. Seen
+ * live (sid=d93be81f, 16-turn session): counting the whole history let old
+ * flows' questions exhaust the budget, and the guard disarmed for the rest
+ * of the session's lifetime. Count only after the last card-bearing
+ * assistant turn.
+ */
 function questionTurnCount(history) {
-    return history.filter((m) => m.role === "assistant" && m.content.trim().endsWith("?")).length;
+    let lastCardsIdx = -1;
+    for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].role === "assistant" && hasExpertCards(history[i].content)) {
+            lastCardsIdx = i;
+            break;
+        }
+    }
+    return history.filter((m, i) => i > lastCardsIdx && m.role === "assistant" && m.content.trim().endsWith("?")).length;
 }
 /**
  * Decide whether the model skipped a ladder rung it owed the user.
