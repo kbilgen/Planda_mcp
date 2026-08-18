@@ -844,6 +844,13 @@ async function runHttp(): Promise<void> {
       status: "ok",
       server: "planda-mcp-server",
       version: "1.0.0",
+      // Which code is actually live? Railway injects these at deploy time;
+      // they answer "is the latest merge deployed?" without guesswork.
+      // Locally they're absent and the fields read "unknown".
+      commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
+      branch: process.env.RAILWAY_GIT_BRANCH ?? "unknown",
+      deployment: process.env.RAILWAY_DEPLOYMENT_ID ?? "unknown",
+      guards: ["hallucination", "intent", "ladder"],
     });
   });
 
