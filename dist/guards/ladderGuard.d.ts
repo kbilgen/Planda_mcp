@@ -36,9 +36,10 @@ import type { IntentResult } from "./intentClassifier.js";
  * (workflow.ts's isClarifyingQuestion) read them correctly.
  */
 export declare const LADDER_TOPIC_QUESTION: string;
+export declare const LADDER_AGE_QUESTION = "Uygun uzman\u0131 belirleyebilmem i\u00E7in \u00F6nemli: terapi g\u00F6recek ki\u015Fi ka\u00E7 ya\u015F\u0131nda?";
 export declare const LADDER_MODALITY_QUESTION: string;
 export declare const LADDER_CITY_QUESTION: string;
-export type LadderRung = "topic" | "modality" | "city";
+export type LadderRung = "age" | "topic" | "modality" | "city";
 export interface LadderSkipResult {
     /** True when the model showed cards but owed the user a question first. */
     skipped: boolean;

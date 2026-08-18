@@ -32,7 +32,7 @@ import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
 import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, stripPermissionTail, buildFlowUserText, } from "./guards/hallucinationGuard.js";
-import { detectLadderSkip, LADDER_TOPIC_QUESTION, LADDER_MODALITY_QUESTION, LADDER_CITY_QUESTION, } from "./guards/ladderGuard.js";
+import { detectLadderSkip, LADDER_AGE_QUESTION, LADDER_TOPIC_QUESTION, LADDER_MODALITY_QUESTION, LADDER_CITY_QUESTION, } from "./guards/ladderGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 import { createServerCardProvider, DEFAULT_MCP_ENDPOINT } from "./serverCard.js";
 import { saveReport, listReports, getReport, appendDecision, listDecisions, } from "./services/reviewStorage.js";
@@ -271,6 +271,11 @@ async function postProcessResponse(text, userMessage) {
  */
 async function naturalLadderQuestion(rung, userMessage, history) {
     const notes = {
+        age: "[Sistem notu: Terapi görecek kişi bir çocuk/ergen ama yaşı henüz " +
+            "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
+            "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
+            "hissettir, sonra TEK soru olarak terapi görecek kişinin kaç yaşında " +
+            "olduğunu sor.]",
         topic: "[Sistem notu: Kullanıcının hangi konuda desteğe ihtiyacı olduğu henüz " +
             "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
             "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
@@ -510,6 +515,7 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
                 }
                 catch { }
                 const staticFallbacks = {
+                    age: LADDER_AGE_QUESTION,
                     topic: LADDER_TOPIC_QUESTION,
                     modality: LADDER_MODALITY_QUESTION,
                     city: LADDER_CITY_QUESTION,

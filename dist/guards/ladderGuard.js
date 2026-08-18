@@ -37,6 +37,7 @@ import { extractUserTopics, extractUserRequest } from "./hallucinationGuard.js";
  */
 export const LADDER_TOPIC_QUESTION = "Sana en uygun uzmanı önerebilmem için biraz daha anlamak isterim: " +
     "seni en çok zorlayan konu ne?";
+export const LADDER_AGE_QUESTION = "Uygun uzmanı belirleyebilmem için önemli: terapi görecek kişi kaç yaşında?";
 export const LADDER_MODALITY_QUESTION = "Sana en uygun ismi bulabilmem için tek bir şey daha sorayım: " +
     "görüşmeleri online mı yoksa yüz yüze mi yapmayı tercih edersin?";
 export const LADDER_CITY_QUESTION = "Yüz yüze görüşmek istediğini not ettim. Sana yakın bir terapist " +
@@ -134,6 +135,23 @@ function topicEverAsked(history) {
  * classifier files them under search_therapist, so exempt them here.
  */
 const NAME_PAIR_RE = /\p{Lu}\p{Ll}+\s+\p{Lu}\p{Ll}+/u;
+// ─── Age rung (prompt: "çocuk/ergen sinyalinde YAŞ basamağı en öne geçer") ──
+// Therapists have hard accept-age ranges; recommending without the age means
+// the server-side age elimination silently never ran for a minor.
+const CHILD_PHRASES = [
+    "cocugum", "oglum", "kizim", "yegenim", "ogrencim",
+    "cocuk icin", "ergen icin", "ergenlik",
+];
+/** "14 yaşında" / "14 yas" style — an age is on the table. */
+const AGE_STATED_RE = /\b\d{1,2}\s*ya[şs]/iu;
+function ageEverAsked(history) {
+    return history.some((m) => {
+        if (m.role !== "assistant")
+            return false;
+        const n = normTR(m.content);
+        return n.includes("kac yasinda") || n.includes("yasi kac");
+    });
+}
 function questionTurnCount(history) {
     let lastCardsIdx = -1;
     for (let i = history.length - 1; i >= 0; i--) {
@@ -179,6 +197,22 @@ export function detectLadderSkip(opts) {
     }
     if (questionTurnCount(history) >= MAX_QUESTION_TURNS) {
         return { skipped: false, reason: "question_budget_spent" };
+    }
+    // ── Rung 0: age (only when a child/teen is involved) ─────────────────────
+    // Seen live: "Çocuğum için terapist arıyorum" got the modality question
+    // and — had the user not volunteered "14 yaşında" — cards would have gone
+    // out with the server's age elimination never armed.
+    const rawUserTextForAge = userTurns.join("\n");
+    const childSignal = containsAny(conversation, CHILD_PHRASES);
+    if (childSignal) {
+        const ageStated = AGE_STATED_RE.test(rawUserTextForAge) ||
+            (ageEverAsked(history) && userTurns.some((t) => /\b\d{1,2}\b/.test(t)));
+        if (!ageStated) {
+            if (!ageEverAsked(history)) {
+                return { skipped: true, missingRung: "age" };
+            }
+            // Asked and dodged — don't trap the user, fall through.
+        }
     }
     // ── Rung 1: topic ─────────────────────────────────────────────────────────
     // Seen live: model showed cards after modality+city with no topic ever

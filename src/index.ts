@@ -55,6 +55,7 @@ import {
 } from "./guards/hallucinationGuard.js";
 import {
   detectLadderSkip,
+  LADDER_AGE_QUESTION,
   LADDER_TOPIC_QUESTION,
   LADDER_MODALITY_QUESTION,
   LADDER_CITY_QUESTION,
@@ -347,6 +348,12 @@ async function naturalLadderQuestion(
   history: ChatMessage[]
 ): Promise<string | null> {
   const notes: Record<LadderRung, string> = {
+    age:
+      "[Sistem notu: Terapi görecek kişi bir çocuk/ergen ama yaşı henüz " +
+      "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
+      "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
+      "hissettir, sonra TEK soru olarak terapi görecek kişinin kaç yaşında " +
+      "olduğunu sor.]",
     topic:
       "[Sistem notu: Kullanıcının hangi konuda desteğe ihtiyacı olduğu henüz " +
       "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
@@ -623,6 +630,7 @@ async function guardResponse(
           });
         } catch {}
         const staticFallbacks: Record<LadderRung, string> = {
+          age: LADDER_AGE_QUESTION,
           topic: LADDER_TOPIC_QUESTION,
           modality: LADDER_MODALITY_QUESTION,
           city: LADDER_CITY_QUESTION,

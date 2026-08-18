@@ -448,3 +448,57 @@ test("detectLadderSkip: name lookup needs no topic", () => {
   assert.equal(r.skipped, false);
   assert.equal(r.reason, "modality_online");
 });
+
+// ─── detectLadderSkip — age rung (child/teen flows) ─────────────────────────
+
+test("detectLadderSkip: child signal without an age flags the age rung", () => {
+  const r = detectLadderSkip({
+    userMessage: "Çocuğum için online terapist lazım, çok kaygılı",
+    history: [],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "age");
+});
+
+test("detectLadderSkip: child with age stated passes the age rung", () => {
+  const r = detectLadderSkip({
+    userMessage: "14 yaşındaki kızım için online kaygı terapisti",
+    history: [],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "modality_online");
+});
+
+test("detectLadderSkip: bare-number answer to the age question counts", () => {
+  const r = detectLadderSkip({
+    userMessage: "online olsun",
+    history: [
+      { role: "user", content: "Oğlum için kaygı terapisti arıyorum" },
+      { role: "assistant", content: "Terapi görecek kişi kaç yaşında?" },
+      { role: "user", content: "14" },
+      { role: "assistant", content: "Online mı yüz yüze mi tercih edersin?" },
+    ],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "modality_online");
+});
+
+test("detectLadderSkip: age dodge falls through instead of trapping", () => {
+  const r = detectLadderSkip({
+    userMessage: "önemli mi bilmiyorum, kaygılı işte, online olsun",
+    history: [
+      { role: "user", content: "Çocuğum için terapist arıyorum" },
+      { role: "assistant", content: "Terapi görecek kişi kaç yaşında?" },
+    ],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "modality_online");
+});
