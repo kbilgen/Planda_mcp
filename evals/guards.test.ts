@@ -10,7 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractUserTopics } from "../src/guards/hallucinationGuard.js";
+import { extractUserTopics, buildFlowUserText } from "../src/guards/hallucinationGuard.js";
 import { detectLadderSkip } from "../src/guards/ladderGuard.js";
 import { mentionsLocation } from "../src/services/locationNormalizer.js";
 import type { ChatMessage } from "../src/sessionStore.js";
@@ -316,4 +316,51 @@ test("detectLadderSkip: does not re-ask when modality was just asked", () => {
   });
   assert.equal(r.skipped, false);
   assert.equal(r.reason, "modality_already_asked");
+});
+
+// ─── buildFlowUserText — flow-scoped guard context ───────────────────────────
+//
+// Prod (ladder flow): topic "aksiyetem var" arrived three turns before the
+// city. Guards received only the final "istanbul", so topics=[] and the
+// specialty check/Eşleşme line silently disabled themselves.
+
+const ladderHistory: ChatMessage[] = [
+  { role: "user", content: "Kendim için psikolog arıyorum" },
+  { role: "assistant", content: "Seni en çok zorlayan konu ne?" },
+  { role: "user", content: "aksiyetem var" },
+  { role: "assistant", content: "Online mı yüz yüze mi tercih edersin?" },
+  { role: "user", content: "yüzyüze" },
+  { role: "assistant", content: "Hangi şehirde?" },
+];
+
+test("buildFlowUserText: joins current-flow user turns with the new message", () => {
+  const text = buildFlowUserText(ladderHistory, "istanbul");
+  assert.ok(text.includes("aksiyetem var"));
+  assert.ok(text.includes("yüzyüze"));
+  assert.ok(text.includes("istanbul"));
+  // Assistant turns must not leak into the user-request text.
+  assert.ok(!text.includes("zorlayan konu"));
+});
+
+test("buildFlowUserText: the prod ladder flow now yields the anxiety topic", () => {
+  assert.deepEqual(
+    extractUserTopics(buildFlowUserText(ladderHistory, "istanbul")),
+    ["kaygi"]
+  );
+});
+
+test("buildFlowUserText: turns before the last card-bearing reply are dropped", () => {
+  const withOldFlow: ChatMessage[] = [
+    { role: "user", content: "depresyon için terapist" },
+    { role: "assistant", content: "**Ad Soyad** — Psikolog\n[[expert:ad-soyad]]" },
+    { role: "user", content: "teşekkürler" },
+  ];
+  const text = buildFlowUserText(withOldFlow, "başka bir konu var mı");
+  assert.ok(!text.includes("depresyon"));
+  assert.ok(text.includes("teşekkürler"));
+  assert.ok(text.includes("başka bir konu var mı"));
+});
+
+test("buildFlowUserText: empty history returns just the message", () => {
+  assert.equal(buildFlowUserText([], "kaygı için terapist"), "kaygı için terapist");
 });

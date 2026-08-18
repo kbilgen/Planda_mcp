@@ -51,6 +51,7 @@ import {
   pruneMismatchedCards,
   injectStructuredMatchBlocks,
   stripPermissionTail,
+  buildFlowUserText,
 } from "./guards/hallucinationGuard.js";
 import {
   detectLadderSkip,
@@ -454,7 +455,10 @@ async function guardResponse(
   let workingResponse = rawResponse;
   if (userMessage) {
     try {
-      const specMismatch = await verifySpecialtyMatch(userMessage, rawResponse);
+      // Topic/budget/city may have been given turns ago in the ladder flow —
+      // check against the whole current-flow user text, not just this turn.
+      const flowText = buildFlowUserText(history, userMessage);
+      const specMismatch = await verifySpecialtyMatch(flowText, rawResponse);
       for (const v of specMismatch) {
         violations.push({ kind: v.kind, detail: v.value });
       }
@@ -643,7 +647,10 @@ async function groundedRetry(
   try {
     const second = await runChat({ message, history, forceToolCall: true });
     if (!second.toolCalls?.length) return null;
-    const processed = await postProcessResponse(second.response, message);
+    const processed = await postProcessResponse(
+      second.response,
+      buildFlowUserText(history, message)
+    );
     const guarded = await guardResponse(
       processed,
       second.toolCalls.length,
@@ -1141,7 +1148,10 @@ async function runHttp(): Promise<void> {
     try {
       let { response: rawResponse, updatedHistory, toolCalls, model } =
         await runChat({ message, history, forceToolCall });
-      const processed = await postProcessResponse(rawResponse, message);
+      const processed = await postProcessResponse(
+        rawResponse,
+        buildFlowUserText(history, message)
+      );
       let guarded = await guardResponse(
         processed,
         toolCalls?.length ?? 0,
@@ -1278,7 +1288,10 @@ async function runHttp(): Promise<void> {
       );
 
       // Post-process full text (fixes Turkish names + expert tags + match block)
-      const processed = await postProcessResponse(fullText, message);
+      const processed = await postProcessResponse(
+        fullText,
+        buildFlowUserText(history, message)
+      );
       let guarded = await guardResponse(
         processed,
         toolCalls?.length ?? 0,
@@ -1381,7 +1394,10 @@ async function runHttp(): Promise<void> {
         forceToolCall,
       });
       const rawText = (result as { output_text?: string }).output_text ?? JSON.stringify(result);
-      const processed = await postProcessResponse(rawText, message);
+      const processed = await postProcessResponse(
+        rawText,
+        buildFlowUserText(history ?? [], message)
+      );
       let toolCalls = (result as { toolCalls?: ToolCallLog[] }).toolCalls;
       let model = (result as { model?: string }).model;
       let guarded = await guardResponse(

@@ -31,7 +31,7 @@ import { getHistory, saveHistory, deleteSession } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
-import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, stripPermissionTail, } from "./guards/hallucinationGuard.js";
+import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, stripPermissionTail, buildFlowUserText, } from "./guards/hallucinationGuard.js";
 import { detectLadderSkip, LADDER_MODALITY_QUESTION, LADDER_CITY_QUESTION, } from "./guards/ladderGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 import { createServerCardProvider, DEFAULT_MCP_ENDPOINT } from "./serverCard.js";
@@ -359,7 +359,10 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
     let workingResponse = rawResponse;
     if (userMessage) {
         try {
-            const specMismatch = await verifySpecialtyMatch(userMessage, rawResponse);
+            // Topic/budget/city may have been given turns ago in the ladder flow —
+            // check against the whole current-flow user text, not just this turn.
+            const flowText = buildFlowUserText(history, userMessage);
+            const specMismatch = await verifySpecialtyMatch(flowText, rawResponse);
             for (const v of specMismatch) {
                 violations.push({ kind: v.kind, detail: v.value });
             }
@@ -512,7 +515,7 @@ async function groundedRetry(message, history, intent) {
         const second = await runChat({ message, history, forceToolCall: true });
         if (!second.toolCalls?.length)
             return null;
-        const processed = await postProcessResponse(second.response, message);
+        const processed = await postProcessResponse(second.response, buildFlowUserText(history, message));
         const guarded = await guardResponse(processed, second.toolCalls.length, second.toolCalls.map((c) => c.name), intent, message, history);
         // A ladder question is a legitimate rescue; a damage-control fallback
         // is not — fall back to the caller's original handling for the latter.
@@ -957,7 +960,7 @@ async function runHttp() {
         const startedAt = Date.now();
         try {
             let { response: rawResponse, updatedHistory, toolCalls, model } = await runChat({ message, history, forceToolCall });
-            const processed = await postProcessResponse(rawResponse, message);
+            const processed = await postProcessResponse(rawResponse, buildFlowUserText(history, message));
             let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message, history ?? []);
             // Guard discarded a tool-less answer → one grounded retry with tools.
             if (guarded.replaced && (toolCalls?.length ?? 0) === 0) {
@@ -1063,7 +1066,7 @@ async function runHttp() {
                 },
             });
             // Post-process full text (fixes Turkish names + expert tags + match block)
-            const processed = await postProcessResponse(fullText, message);
+            const processed = await postProcessResponse(fullText, buildFlowUserText(history, message));
             let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message, history ?? []);
             // Guard discarded a tool-less answer → one grounded retry with tools.
             // The corrected/done events below carry the rescued text to the client.
@@ -1145,7 +1148,7 @@ async function runHttp() {
                 forceToolCall,
             });
             const rawText = result.output_text ?? JSON.stringify(result);
-            const processed = await postProcessResponse(rawText, message);
+            const processed = await postProcessResponse(rawText, buildFlowUserText(history ?? [], message));
             let toolCalls = result.toolCalls;
             let model = result.model;
             let guarded = await guardResponse(processed, toolCalls?.length ?? 0, (toolCalls ?? []).map((c) => c.name), intent, message, history ?? []);

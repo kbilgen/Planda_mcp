@@ -6,6 +6,7 @@
  * violations. Callers log them; future work can add a retry loop.
  */
 import type { Therapist } from "../types.js";
+import type { ChatMessage } from "../sessionStore.js";
 export interface HallucinationViolation {
     kind: "unknown_therapist" | "unknown_username" | "specialty_mismatch";
     value: string;
@@ -106,6 +107,23 @@ export interface UserRequest {
     approach: string | null;
     prefersOnline: boolean | null;
 }
+/**
+ * User-request context for the guards and card rewriter, scoped to the
+ * CURRENT search flow: user turns after the last card-bearing assistant
+ * message, plus the message of this turn.
+ *
+ * Motivation (prod, ladder flow): the user gives the topic ("aksiyetem
+ * var"), modality and city over four turns. Passing only the final turn
+ * ("istanbul") to extractUserRequest left topics empty — so the Uzmanlık
+ * line never surfaced the anxiety specialty, the Eşleşme block had no
+ * "✓ Uzmanlık" row, and specialty-mismatch pruning was silently disabled
+ * for exactly the multi-turn flow the prompt now steers users into.
+ *
+ * Scoping to the current flow (not the whole session) keeps stale topics
+ * from a previous, completed search out of the request — same boundary
+ * questionTurnCount uses in ladderGuard.
+ */
+export declare function buildFlowUserText(history: ChatMessage[], message: string): string;
 /** Pull structured request attributes out of a free-form user message. */
 export declare function extractUserRequest(userMessage: string): UserRequest;
 /**
