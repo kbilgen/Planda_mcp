@@ -28,7 +28,7 @@ import express, { Request, Response } from "express";
 import cors from "cors";
 import { registerTherapistTools } from "./tools/therapists.js";
 import { runWorkflow, runChat, runChatStream } from "./workflow.js";
-import { getHistory, saveHistory, sessionCount } from "./sessionStore.js";
+import { getHistory, saveHistory, deleteSession, sessionCount } from "./sessionStore.js";
 import type { ChatMessage } from "./sessionStore.js";
 import { findTherapists } from "./services/therapistApi.js";
 import type { Therapist } from "./types.js";
@@ -571,6 +571,14 @@ async function guardResponse(
         response: workingResponse,
         intent,
       });
+      // Log the pass reason whenever cards shipped — "why didn't the guard
+      // fire?" must be answerable from logs alone (the stale-session incident
+      // cost a full debugging session for lack of this line).
+      if (!ladder.skipped && ladder.reason && ladder.reason !== "no_cards") {
+        console.log(
+          `[guard] ladder pass: ${ladder.reason} (history=${history.length} turns)`
+        );
+      }
       if (ladder.skipped && ladder.missingRung) {
         violations.push({
           kind: "other",
@@ -844,6 +852,13 @@ async function runHttp(): Promise<void> {
       status: "ok",
       server: "planda-mcp-server",
       version: "1.0.0",
+      // Which code is actually live? Railway injects these at deploy time;
+      // they answer "is the latest merge deployed?" without guesswork.
+      // Locally they're absent and the fields read "unknown".
+      commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
+      branch: process.env.RAILWAY_GIT_BRANCH ?? "unknown",
+      deployment: process.env.RAILWAY_DEPLOYMENT_ID ?? "unknown",
+      guards: ["hallucination", "intent", "ladder"],
     });
   });
 
@@ -1060,6 +1075,34 @@ async function runHttp(): Promise<void> {
   // Öncelik: body'de history varsa → onu kullan (server yeniden deploy edilse de çalışır)
   //          history yoksa → session store'dan yükle
   //
+  // ── POST /v1/assistant/session/reset — clear server-side history ─────────
+  //
+  // The web widget's "Temizle" button clears the visible chat but keeps the
+  // same session_id, so Redis still holds the previous conversation. The
+  // next message then runs against stale context: the model carries over an
+  // old "yüzyüze"/"İstanbul" answer, and the ladder guard sees a modality in
+  // history and stands down (observed live, sid=d93be81f). Frontends must
+  // call this on Temizle — or rotate to a fresh session_id, either works.
+  //
+  // Body: { "session_id": "uuid" } → { "ok": true }
+  app.post("/v1/assistant/session/reset", requireApiKey, async (req: Request, res: Response) => {
+    const sessionId =
+      typeof req.body?.session_id === "string" && UUID_RE.test(req.body.session_id.trim())
+        ? req.body.session_id.trim()
+        : null;
+    if (!sessionId) {
+      res.status(400).json({ error: "session_id (uuid) required" });
+      return;
+    }
+    try {
+      await deleteSession(sessionId);
+      res.json({ ok: true, session_id: sessionId });
+    } catch (err) {
+      console.error("[planda] session reset error:", err);
+      res.status(500).json({ error: "session reset failed" });
+    }
+  });
+
   app.post("/v1/assistant/chat", requireApiKey, async (req: Request, res: Response) => {
     if (!hasAiProvider()) {
       res.status(500).json({ error: "No AI provider configured (set OPENAI_API_KEY, or AI_PROVIDER=claude + ANTHROPIC_API_KEY)" });
