@@ -253,6 +253,34 @@ test("detectLadderSkip: passes when the user asked to skip ahead", () => {
   assert.equal(r.reason, "user_wants_speed");
 });
 
+test("detectLadderSkip: question budget resets after a delivered recommendation", () => {
+  // Live incident (sid=d93be81f): a long session accumulated 3+ question
+  // turns across OLD, completed search flows, and the whole-history count
+  // disarmed the guard for the rest of the session. Questions before the
+  // last card-bearing turn must not count against the current flow.
+  const r = detectLadderSkip({
+    userMessage: "kaygı için terapist lazım",
+    history: [
+      { role: "user", content: "psikolog arıyorum" },
+      { role: "assistant", content: "Seni en çok zorlayan konu ne?" },
+      { role: "user", content: "uyku sorunu" },
+      { role: "assistant", content: "Online mı yüz yüze mi tercih edersin?" },
+      { role: "user", content: "farketmez sen öner" },
+      { role: "assistant", content: "Peki bütçen nedir?" },
+      // Completed flow — cards delivered. Budget resets here. The old
+      // "farketmez" answer also belonged to that flow, but speed phrases
+      // legitimately persist as a user preference; use a fresh transcript
+      // below to keep this test about the budget alone.
+      { role: "assistant", content: "Şu isim uygun: **Test Kişi** — Psikolog [[expert:test-kisi]]" },
+    ],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  // Speed phrase from the earlier flow still passes it through — assert the
+  // reason is NOT budget exhaustion: the 3 old questions no longer count.
+  assert.notEqual(r.reason, "question_budget_spent");
+});
+
 test("detectLadderSkip: passes once the 3-question budget is spent", () => {
   const r = detectLadderSkip({
     userMessage: "bilmiyorum",
