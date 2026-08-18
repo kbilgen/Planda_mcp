@@ -407,6 +407,11 @@ export function detectIntentToolMismatch(
       "güncel listeye", "guncel listeye",
       "net hatırlamıyorum", "net hatirlamiyorum",
       "tekrar öneri", "tekrar oneri",
+      // Triage intake rung (GEÇMİŞ DESTEK VE TANI KURALI) — legitimate
+      // pre-search question, not a missed tool call.
+      "psikolojik destek", "psikiyatrik destek",
+      "destek aldın mı", "destek aldin mi",
+      "tanı var mıydı", "tani var miydi",
     ];
     if (lastChar === "?" || clarifierPhrases.some((p) => lower.includes(p))) {
       return [];

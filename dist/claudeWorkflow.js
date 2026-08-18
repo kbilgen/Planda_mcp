@@ -152,6 +152,9 @@ function isClarifyingQuestion(text) {
         "hangi konu", "hangi şehir", "hangi sehir", "kimin için", "kimin icin",
         "kaç yaş", "kac yas", "online mi", "yüz yüze mi", "yuz yuze mi",
         "çalışma tarzı", "calisma tarzi", "hangi yaklaşım", "hangi yaklasim",
+        "psikolojik destek", "psikiyatrik destek",
+        "destek aldın mı", "destek aldin mi",
+        "tanı var mıydı", "tani var miydi",
     ].some((p) => lower.includes(p));
 }
 // ─── Core run ────────────────────────────────────────────────────────────────

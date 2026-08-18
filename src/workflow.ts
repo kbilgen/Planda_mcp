@@ -166,6 +166,11 @@ function isClarifyingQuestion(text: string): boolean {
     // Indirect working-style question — legitimate pre-search turn.
     "çalışma tarzı", "calisma tarzi",
     "hangi yaklaşım", "hangi yaklasim",
+    // Triage intake rung (GEÇMİŞ DESTEK VE TANI KURALI) — legitimate
+    // pre-search question, not a missed tool call.
+    "psikolojik destek", "psikiyatrik destek",
+    "destek aldın mı", "destek aldin mi",
+    "tanı var mıydı", "tani var miydi",
   ];
   return clarifiers.some((p) => lower.includes(p));
 }
