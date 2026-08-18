@@ -536,10 +536,12 @@ const KNOWN_CITIES_DISPLAY: Record<string, string> = {
   kocaeli: "Kocaeli",
 };
 
+/** How many trailing user turns feed the guard context. */
+const FLOW_TEXT_MAX_USER_TURNS = 10;
+
 /**
- * User-request context for the guards and card rewriter, scoped to the
- * CURRENT search flow: user turns after the last card-bearing assistant
- * message, plus the message of this turn.
+ * User-request context for the guards and card rewriter: the session's
+ * recent user turns joined with the message of this turn.
  *
  * Motivation (prod, ladder flow): the user gives the topic ("aksiyetem
  * var"), modality and city over four turns. Passing only the final turn
@@ -548,22 +550,19 @@ const KNOWN_CITIES_DISPLAY: Record<string, string> = {
  * "✓ Uzmanlık" row, and specialty-mismatch pruning was silently disabled
  * for exactly the multi-turn flow the prompt now steers users into.
  *
- * Scoping to the current flow (not the whole session) keeps stale topics
- * from a previous, completed search out of the request — same boundary
- * questionTurnCount uses in ladderGuard.
+ * Deliberately NOT scoped to "since the last card-bearing reply": the
+ * loop-breaker lets cards appear mid-ladder (e.g. right after the topic
+ * answer), which would put the topic before the boundary and lose it
+ * again. Including every recent user turn fails SOFT instead — a topic
+ * from an earlier search widens the accepted-specialty set rather than
+ * disabling the check — and the 30-minute session TTL plus the reset
+ * endpoint bound how stale that context can get.
  */
 export function buildFlowUserText(history: ChatMessage[], message: string): string {
-  let lastCardsIdx = -1;
-  for (let i = history.length - 1; i >= 0; i--) {
-    const m = history[i];
-    if (m.role === "assistant" && /\[\[expert:[^\]]+\]\]/.test(m.content)) {
-      lastCardsIdx = i;
-      break;
-    }
-  }
   const turns = history
-    .filter((m, i) => i > lastCardsIdx && m.role === "user")
-    .map((m) => m.content);
+    .filter((m) => m.role === "user")
+    .map((m) => m.content)
+    .slice(-FLOW_TEXT_MAX_USER_TURNS);
   return [...turns, message].join("\n");
 }
 

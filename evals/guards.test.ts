@@ -349,16 +349,19 @@ test("buildFlowUserText: the prod ladder flow now yields the anxiety topic", () 
   );
 });
 
-test("buildFlowUserText: turns before the last card-bearing reply are dropped", () => {
-  const withOldFlow: ChatMessage[] = [
-    { role: "user", content: "depresyon için terapist" },
+test("buildFlowUserText: topic survives cards shown mid-ladder", () => {
+  // Prod follow-up: the loop-breaker let cards appear right after the topic
+  // answer, then the user kept refining (yüzyüze → istanbul). A boundary at
+  // the last card-bearing reply would lose the topic again — every recent
+  // user turn must stay in the context.
+  const withMidFlowCards: ChatMessage[] = [
+    { role: "user", content: "aksiyetem var" },
     { role: "assistant", content: "**Ad Soyad** — Psikolog\n[[expert:ad-soyad]]" },
-    { role: "user", content: "teşekkürler" },
+    { role: "user", content: "yüzyüze" },
   ];
-  const text = buildFlowUserText(withOldFlow, "başka bir konu var mı");
-  assert.ok(!text.includes("depresyon"));
-  assert.ok(text.includes("teşekkürler"));
-  assert.ok(text.includes("başka bir konu var mı"));
+  const text = buildFlowUserText(withMidFlowCards, "istanbul");
+  assert.ok(text.includes("aksiyetem var"));
+  assert.deepEqual(extractUserTopics(text), ["kaygi"]);
 });
 
 test("buildFlowUserText: empty history returns just the message", () => {
