@@ -32,7 +32,7 @@ import { findTherapists } from "./services/therapistApi.js";
 import { logTurn } from "./logger.js";
 import { classifyIntent, detectIntentToolMismatch, shouldForceToolCall, } from "./guards/intentClassifier.js";
 import { verifyResponse, verifySpecialtyMatch, shouldUseFallback, HALLUCINATION_FALLBACK, NO_MATCH_FALLBACK, EXPLANATION_FALLBACK, detectMetaHallucination, extractMismatchedUsernames, pruneMismatchedCards, injectStructuredMatchBlocks, stripPermissionTail, buildFlowUserText, } from "./guards/hallucinationGuard.js";
-import { detectLadderSkip, LADDER_MODALITY_QUESTION, LADDER_CITY_QUESTION, } from "./guards/ladderGuard.js";
+import { detectLadderSkip, LADDER_TOPIC_QUESTION, LADDER_MODALITY_QUESTION, LADDER_CITY_QUESTION, } from "./guards/ladderGuard.js";
 import { initSentry, Sentry } from "./sentry.js";
 import { createServerCardProvider, DEFAULT_MCP_ENDPOINT } from "./serverCard.js";
 import { saveReport, listReports, getReport, appendDecision, listDecisions, } from "./services/reviewStorage.js";
@@ -260,16 +260,23 @@ async function postProcessResponse(text, userMessage) {
  * any cards, missing question mark, or bloat → null → static fallback.
  */
 async function naturalLadderQuestion(rung, userMessage, history) {
-    const note = rung === "city"
-        ? "[Sistem notu: Kullanıcı yüz yüze görüşmek istiyor ama hangi şehirde " +
-            "olduğunu henüz söylemedi. Terapist önerme, kart gösterme, tool çağırma. " +
+    const notes = {
+        topic: "[Sistem notu: Kullanıcının hangi konuda desteğe ihtiyacı olduğu henüz " +
+            "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
             "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
-            "hissettir, sonra TEK soru olarak hangi şehirde olduğunu sor.]"
-        : "[Sistem notu: Kullanıcının görüşme tercihi (online mı yüz yüze mi) " +
+            "hissettir, sonra TEK soru olarak onu en çok zorlayan konunun ne " +
+            "olduğunu sor.]",
+        modality: "[Sistem notu: Kullanıcının görüşme tercihi (online mı yüz yüze mi) " +
             "henüz belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
             "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
             "hissettir, sonra TEK soru olarak online mı yüz yüze mi tercih " +
-            "ettiğini sor.]";
+            "ettiğini sor.]",
+        city: "[Sistem notu: Kullanıcı yüz yüze görüşmek istiyor ama hangi şehirde " +
+            "olduğunu henüz söylemedi. Terapist önerme, kart gösterme, tool çağırma. " +
+            "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
+            "hissettir, sonra TEK soru olarak hangi şehirde olduğunu sor.]",
+    };
+    const note = notes[rung];
     try {
         const result = await runChat({
             message: note,
@@ -492,10 +499,13 @@ async function guardResponse(rawResponse, toolCallCount, actualToolNames = [], i
                     });
                 }
                 catch { }
+                const staticFallbacks = {
+                    topic: LADDER_TOPIC_QUESTION,
+                    modality: LADDER_MODALITY_QUESTION,
+                    city: LADDER_CITY_QUESTION,
+                };
                 const question = (await naturalLadderQuestion(ladder.missingRung, userMessage, history)) ??
-                    (ladder.missingRung === "city"
-                        ? LADDER_CITY_QUESTION
-                        : LADDER_MODALITY_QUESTION);
+                    staticFallbacks[ladder.missingRung];
                 return {
                     response: question,
                     replaced: true,

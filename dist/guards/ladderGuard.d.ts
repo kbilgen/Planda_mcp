@@ -35,9 +35,10 @@ import type { IntentResult } from "./intentClassifier.js";
  * fails. Both end with "?" so clarifying-question heuristics downstream
  * (workflow.ts's isClarifyingQuestion) read them correctly.
  */
+export declare const LADDER_TOPIC_QUESTION: string;
 export declare const LADDER_MODALITY_QUESTION: string;
 export declare const LADDER_CITY_QUESTION: string;
-export type LadderRung = "modality" | "city";
+export type LadderRung = "topic" | "modality" | "city";
 export interface LadderSkipResult {
     /** True when the model showed cards but owed the user a question first. */
     skipped: boolean;

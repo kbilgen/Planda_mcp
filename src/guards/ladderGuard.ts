@@ -30,6 +30,7 @@
 import type { ChatMessage } from "../sessionStore.js";
 import type { IntentResult } from "./intentClassifier.js";
 import { mentionsLocation } from "../services/locationNormalizer.js";
+import { extractUserTopics, extractUserRequest } from "./hallucinationGuard.js";
 
 /**
  * Static fallback questions, one per rung. The caller first tries to have
@@ -38,6 +39,10 @@ import { mentionsLocation } from "../services/locationNormalizer.js";
  * fails. Both end with "?" so clarifying-question heuristics downstream
  * (workflow.ts's isClarifyingQuestion) read them correctly.
  */
+export const LADDER_TOPIC_QUESTION =
+  "Sana en uygun uzmanı önerebilmem için biraz daha anlamak isterim: " +
+  "seni en çok zorlayan konu ne?";
+
 export const LADDER_MODALITY_QUESTION =
   "Sana en uygun ismi bulabilmem için tek bir şey daha sorayım: " +
   "görüşmeleri online mı yoksa yüz yüze mi yapmayı tercih edersin?";
@@ -89,7 +94,7 @@ const EXEMPT_INTENTS = new Set([
 /** The prompt caps the ladder at 3 question turns (prompts.ts "Kurallar"). */
 const MAX_QUESTION_TURNS = 3;
 
-export type LadderRung = "modality" | "city";
+export type LadderRung = "topic" | "modality" | "city";
 
 export interface LadderSkipResult {
   /** True when the model showed cards but owed the user a question first. */
@@ -135,6 +140,32 @@ function lastTurnAsked(history: ChatMessage[], rung: LadderRung): boolean {
  * of the session's lifetime. Count only after the last card-bearing
  * assistant turn.
  */
+/**
+ * Was the topic question asked at ANY point in the conversation? Unlike the
+ * modality/city loop breakers (which only shield the immediately-dodged
+ * question), topic uses the whole history: once the user was asked what's
+ * troubling them and moved on without answering, they chose not to share —
+ * insisting again later in the flow would be worse than a topicless match.
+ */
+function topicEverAsked(history: ChatMessage[]): boolean {
+  return history.some((m) => {
+    if (m.role !== "assistant") return false;
+    const n = normTR(m.content);
+    return (
+      n.includes("zorlayan") ||
+      n.includes("hangi konu") ||
+      (n.includes("konu") && m.content.includes("?"))
+    );
+  });
+}
+
+/**
+ * Two capitalized words in a row read as a person's name ("Ekin Alankuş
+ * kim?") — name lookups legitimately carry no topic, and the intent
+ * classifier files them under search_therapist, so exempt them here.
+ */
+const NAME_PAIR_RE = /\p{Lu}\p{Ll}+\s+\p{Lu}\p{Ll}+/u;
+
 function questionTurnCount(history: ChatMessage[]): number {
   let lastCardsIdx = -1;
   for (let i = history.length - 1; i >= 0; i--) {
@@ -191,6 +222,27 @@ export function detectLadderSkip(opts: {
   }
   if (questionTurnCount(history) >= MAX_QUESTION_TURNS) {
     return { skipped: false, reason: "question_budget_spent" };
+  }
+
+  // ── Rung 1: topic ─────────────────────────────────────────────────────────
+  // Seen live: model showed cards after modality+city with no topic ever
+  // given ("konu belirtmediğin için genel başvuruda öne çıkan 3 isim…") —
+  // no topic means no specialty scoring, an empty Eşleşme block and an
+  // ungrounded rationale. The guard itself used to institutionalize this:
+  // its rung set started at modality, so its own rescue question steered
+  // conversations into the topicless route. Topic is checked on the raw
+  // (unnormalized) turns — extractUserTopics/extractUserRequest normalize
+  // internally, and the name-pair exemption needs original capitalization.
+  const rawUserText = userTurns.join("\n");
+  if (
+    extractUserTopics(rawUserText).length === 0 &&
+    !extractUserRequest(rawUserText).approach &&
+    !NAME_PAIR_RE.test(rawUserText)
+  ) {
+    if (!topicEverAsked(history)) {
+      return { skipped: true, missingRung: "topic" };
+    }
+    // Asked and dodged — fall through to the modality/city rungs.
   }
 
   const saidOnline = containsAny(conversation, ONLINE_PHRASES);

@@ -299,13 +299,32 @@ test("detectLadderSkip: passes once the 3-question budget is spent", () => {
   assert.equal(r.reason, "question_budget_spent");
 });
 
-test("detectLadderSkip: does not re-ask when modality was just asked", () => {
-  // Loop breaker: the user gave an unparseable answer to the modality
-  // question. Asking it again would trap them.
+test("detectLadderSkip: modality dodge with no topic recovers to the topic rung", () => {
+  // The user gave an unparseable answer to the modality question. Modality
+  // must not be re-asked (trap) — but topic was NEVER asked, so the guard
+  // recovers the flow at rung 1 instead of passing the cards through.
   const r = detectLadderSkip({
     userMessage: "hmm bilmiyorum ki",
     history: [
       { role: "user", content: "psikolog arıyorum" },
+      {
+        role: "assistant",
+        content: "Görüşmeleri online mı yoksa yüz yüze mi tercih edersin?",
+      },
+    ],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "topic");
+});
+
+test("detectLadderSkip: modality dodge with topic known does not re-ask", () => {
+  // Same loop breaker as before, with the topic already given — cards pass.
+  const r = detectLadderSkip({
+    userMessage: "hmm bilmiyorum ki",
+    history: [
+      { role: "user", content: "depresyondayım, psikolog arıyorum" },
       {
         role: "assistant",
         content: "Görüşmeleri online mı yoksa yüz yüze mi tercih edersin?",
@@ -366,4 +385,66 @@ test("buildFlowUserText: topic survives cards shown mid-ladder", () => {
 
 test("buildFlowUserText: empty history returns just the message", () => {
   assert.equal(buildFlowUserText([], "kaygı için terapist"), "kaygı için terapist");
+});
+
+// ─── detectLadderSkip — topic rung ───────────────────────────────────────────
+//
+// Prod transcript: model (steered by the guard's own modality-first rescue)
+// walked modality → city and then showed generic cards with "konu
+// belirtmediğin için…" — no topic, no specialty scoring, empty Eşleşme.
+
+test("detectLadderSkip: flags cards shown with no topic ever given", () => {
+  const r = detectLadderSkip({
+    userMessage: "istanbul",
+    history: [
+      { role: "user", content: "Kendim için psikolog arıyorum" },
+      {
+        role: "assistant",
+        content:
+          "Sana en uygun ismi bulabilmem için tek bir şey daha sorayım: " +
+          "görüşmeleri online mı yoksa yüz yüze mi yapmayı tercih edersin?",
+      },
+      { role: "user", content: "yüzyüze" },
+      { role: "assistant", content: "Anladım, yüz yüze bakıyoruz. Hangi şehirdeysen ona göre en uygun isimleri çıkarayım?" },
+    ],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "topic");
+});
+
+test("detectLadderSkip: topic dodge falls through to the other rungs", () => {
+  // Topic was asked (prodHistory), user answered with something topicless —
+  // don't insist; the next owed rung (modality) is flagged instead.
+  const r = detectLadderSkip({
+    userMessage: "bilmiyorum, karışık her şey",
+    history: prodHistory,
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "modality");
+});
+
+test("detectLadderSkip: approach query needs no topic", () => {
+  const r = detectLadderSkip({
+    userMessage: "online bdt terapisti arıyorum",
+    history: [],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "modality_online");
+});
+
+test("detectLadderSkip: name lookup needs no topic", () => {
+  const r = detectLadderSkip({
+    userMessage: "Ekin Alankuş kim, online görüşüyor mu?",
+    history: [],
+    response: CARDS,
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "modality_online");
 });
