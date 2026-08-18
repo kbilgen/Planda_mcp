@@ -108,11 +108,14 @@ function findTherapist(therapists, query) {
     const exact = therapists.find((t) => t.username === query);
     if (exact)
         return exact;
-    // The model sometimes writes a label into the card header ("**İlk önerim:
-    // Gülçin Yılmaz**"). Strip a short leading "label:" so the name still
-    // matches — otherwise the header goes unrecognized and Pass 3 double-prints
-    // the card as an "enriched bare tag".
-    const unlabeled = query.replace(/^[^:\n]{1,30}:\s*/, "");
+    // The model sometimes writes a label into the card header — with a colon
+    // ("**İlk önerim: Gülçin Yılmaz**") or without ("**İlk önerim Gülçin
+    // Yılmaz**"). Strip both so the name still matches; otherwise the header
+    // goes unrecognized: Pass 1 can't normalize it to **Ad Soyad** and the
+    // web widget's name highlighting/link breaks on that card.
+    const unlabeled = query
+        .replace(/^[^:\n]{1,30}:\s*/, "")
+        .replace(/^\s*(?:[İIi]lk\s+öner\p{L}*|[ÖOöo]ner\p{L}*|[Ee]n\s+g[üu][çc]l[üu]\s+e[şs]le[şs]me)\s+/u, "");
     const norm = normTR(unlabeled.replace(/[-_]/g, " "));
     const words = norm.split(/\s+/).filter(Boolean);
     if (!words.length)

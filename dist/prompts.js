@@ -379,9 +379,10 @@ Kurallar:
 - en fazla 2-3 isim öner
 - şube varsa mutlaka şube adını yaz
 - KART BAŞLIĞI yalnızca **Ad Soyad** — Unvan biçimindedir. Başlığın içine
-  "İlk önerim:", "En güçlü eşleşme:" gibi etiket YAZMA — bu etiketler
-  kartların üstündeki giriş cümlesine aittir. ("**İlk önerim: Ad Soyad**"
-  ❌ — sistem başlıktaki ismi tanıyamaz ve kart bozuk görünür.)
+  "İlk önerim", "En güçlü eşleşme" gibi etiket YAZMA — bu etiketler
+  kartların üstündeki giriş cümlesine aittir. ("**İlk önerim: Ad Soyad**" ❌,
+  "**İlk önerim Ad Soyad**" ❌ — sistem başlıktaki ismi tanıyamaz, isim
+  linki kırılır ve kart bozuk görünür.)
 - "Detaylar için…" gibi cümle yazma
 - ham URL yazma
 - yalnızca [[expert:username]] kullan
