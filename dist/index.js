@@ -108,7 +108,12 @@ function findTherapist(therapists, query) {
     const exact = therapists.find((t) => t.username === query);
     if (exact)
         return exact;
-    const norm = normTR(query.replace(/[-_]/g, " "));
+    // The model sometimes writes a label into the card header ("**İlk önerim:
+    // Gülçin Yılmaz**"). Strip a short leading "label:" so the name still
+    // matches — otherwise the header goes unrecognized and Pass 3 double-prints
+    // the card as an "enriched bare tag".
+    const unlabeled = query.replace(/^[^:\n]{1,30}:\s*/, "");
+    const norm = normTR(unlabeled.replace(/[-_]/g, " "));
     const words = norm.split(/\s+/).filter(Boolean);
     if (!words.length)
         return undefined;
@@ -200,6 +205,11 @@ async function postProcessResponse(text, userMessage) {
             const tFromHeader = findTherapist(therapists, ctx.precedingHeader);
             if (tFromHeader?.username)
                 return `[[expert:${tFromHeader.username}]]`;
+            // Header exists but its name didn't resolve — the card content is
+            // still there, so NEVER enrich (that double-prints the card). Just
+            // correct the slug if it resolves on its own.
+            const bySlug = findTherapist(therapists, ctx.slug);
+            return bySlug?.username ? `[[expert:${bySlug.username}]]` : _m;
         }
         // No bold header context → slug-based lookup + card enrichment
         const t = findTherapist(therapists, ctx.slug);
