@@ -361,7 +361,7 @@ Terapist önerirken şu formatı kullan:
 
 **[Ad Soyad]** — [Unvan]
 Uzmanlık: [kullanıcının ihtiyacıyla örtüşen alanlar]
-Ücret: [custom_fee varsa onu, yoksa fee] TL
+Ücret: [fee] TL
 Görüşme: [Online / Yüz yüze (Şube Adı)]
 [[expert:username]]
 

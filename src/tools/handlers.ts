@@ -41,6 +41,7 @@ import {
 } from "../services/locationNormalizer.js";
 import { filterByApproachVerified } from "../services/approachVerifier.js";
 import { diversifyRanking } from "../services/therapistRanker.js";
+import { resolveEffectiveFees } from "../services/feeResolver.js";
 
 // ─── Shared result shape ──────────────────────────────────────────────────────
 
@@ -693,6 +694,9 @@ export async function handleFindTherapists(
 
     // Strip large bio fields before character limit check — prevents truncation of list
     output = { ...output, therapists: stripHeavyFields(output.therapists) };
+    // Collapse fee/custom_fee into one price so structuredContent / JSON mode
+    // can never expose the platform default next to the therapist's real fee.
+    output = { ...output, therapists: resolveEffectiveFees(output.therapists) };
     output = applyCharacterLimit(output);
 
     if (!output.therapists.length) {
@@ -754,9 +758,11 @@ export async function handleGetTherapist(
       candidate.username !== undefined ||
       Array.isArray(candidate.branches) ||
       Array.isArray(candidate.services);
-    const therapist: Therapist = looksLikeTherapist
-      ? (raw as Therapist)
-      : ((raw as { data: Therapist }).data);
+    const [therapist]: Therapist[] = resolveEffectiveFees([
+      looksLikeTherapist
+        ? (raw as Therapist)
+        : ((raw as { data: Therapist }).data),
+    ]);
 
     let text: string;
     if (params.response_format === ResponseFormat.JSON) {
