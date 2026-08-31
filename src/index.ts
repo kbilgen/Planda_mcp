@@ -61,6 +61,7 @@ import {
   LADDER_CITY_QUESTION,
   type LadderRung,
 } from "./guards/ladderGuard.js";
+import { createCardHold } from "./streamGate.js";
 import { initSentry, Sentry } from "./sentry.js";
 import { createServerCardProvider, DEFAULT_MCP_ENDPOINT } from "./serverCard.js";
 import {
@@ -1310,6 +1311,10 @@ async function runHttp(): Promise<void> {
     const startedAt = Date.now();
     try {
       let fullText = "";
+      // Cards never reach the client before the guards have ruled on them:
+      // once a delta carries a card marker the rest of the turn is held and
+      // delivered whole via `corrected` + `done` (see streamGate.ts).
+      const hold = createCardHold();
 
       let { updatedHistory, toolCalls, model } = await runChatStream(
         { message, history, forceToolCall },
@@ -1317,7 +1322,13 @@ async function runHttp(): Promise<void> {
           onStatus: (msg) => sseWrite(res, "status", { message: msg }),
           onDelta: (delta) => {
             fullText += delta;
-            sseWrite(res, "delta", { delta });
+            const wasHeld = hold.held;
+            const forward = hold.push(delta);
+            if (forward !== null) {
+              sseWrite(res, "delta", { delta: forward });
+            } else if (!wasHeld) {
+              sseWrite(res, "status", { message: "Uygun uzmanları kontrol ediyorum…" });
+            }
           },
         }
       );
@@ -1348,9 +1359,11 @@ async function runHttp(): Promise<void> {
       }
       const response = guarded.response;
 
-      // If guard or post-processing changed the text, send corrected event so
-      // iOS can replace the streamed text with the final (safe) version.
-      if (response !== fullText) {
+      // If the client's screen differs from the final text — guard or
+      // post-processing changed it, or the card hold kept part of it back —
+      // send corrected so iOS replaces what it streamed with the final
+      // (safe) version.
+      if (response !== hold.streamed) {
         sseWrite(res, "corrected", { response, session_id: sessionId });
       }
 
