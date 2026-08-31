@@ -1174,10 +1174,13 @@ async function runHttp(): Promise<void> {
 
     const startedAt = Date.now();
     try {
+      const steeringNote = ladderSteeringNote(message, history, intent);
       let { response: rawResponse, updatedHistory, toolCalls, model } =
         await runChat({
-          message, history, forceToolCall,
-          steeringNote: ladderSteeringNote(message, history, intent),
+          message, history, forceToolCall, steeringNote,
+          // A turn that owes a question runs without tools — the model
+          // cannot skip the rung it was steered toward.
+          disableTools: Boolean(steeringNote),
         });
       const processed = await postProcessResponse(
         rawResponse,
@@ -1311,10 +1314,13 @@ async function runHttp(): Promise<void> {
       // delivered whole via `corrected` + `done` (see streamGate.ts).
       const hold = createCardHold();
 
+      const steeringNote = ladderSteeringNote(message, history, intent);
       let { updatedHistory, toolCalls, model } = await runChatStream(
         {
-          message, history, forceToolCall,
-          steeringNote: ladderSteeringNote(message, history, intent),
+          message, history, forceToolCall, steeringNote,
+          // A turn that owes a question runs without tools — the model
+          // cannot skip the rung it was steered toward.
+          disableTools: Boolean(steeringNote),
         },
         {
           onStatus: (msg) => sseWrite(res, "status", { message: msg }),

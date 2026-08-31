@@ -223,7 +223,8 @@ function isClarifyingQuestion(text: string): boolean {
 
 async function runOnce(
   messages: Anthropic.Beta.BetaMessageParam[],
-  toolCalls: ToolCallLog[]
+  toolCalls: ToolCallLog[],
+  disableTools?: boolean
 ): Promise<Anthropic.Beta.BetaMessage> {
   const client = getClient();
   const runner = client.beta.messages.toolRunner({
@@ -243,7 +244,7 @@ async function runOnce(
         cache_control: { type: "ephemeral" },
       },
     ],
-    tools: buildClaudeTools(toolCalls),
+    tools: disableTools ? [] : buildClaudeTools(toolCalls),
     messages,
     max_iterations: CLAUDE_MAX_ITERATIONS,
   });
@@ -254,7 +255,7 @@ export async function runClaudeChat(input: ChatInput): Promise<ChatOutput> {
   const toolCalls: ToolCallLog[] = [];
   const firstMessages = buildMessages(input.history, input.message, input.steeringNote);
 
-  let final = await runOnce(firstMessages, toolCalls);
+  let final = await runOnce(firstMessages, toolCalls, input.disableTools);
   let text = extractText(final);
 
   // Refusal (whole fallback chain declined) → safe message, no fabrication.
@@ -277,6 +278,7 @@ export async function runClaudeChat(input: ChatInput): Promise<ChatOutput> {
   // question. One corrective retry, then give up.
   if (
     input.forceToolCall === true &&
+    input.disableTools !== true && // a tool-less turn cannot "miss" a tool
     toolCalls.length === 0 &&
     !isClarifyingQuestion(text)
   ) {

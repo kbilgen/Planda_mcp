@@ -78,6 +78,14 @@ export interface ChatInput {
    * conversation still owes the user a question before any search.
    */
   steeringNote?: string;
+  /**
+   * Run this turn WITHOUT tools. Set together with steeringNote by the
+   * ladder pre-steer: when a rung is still owed, the model must ask, not
+   * search — measured live, the note alone is ignored ~1 turn in 10, and
+   * every miss costs a wasted tool call plus a guard rescue. With no tools
+   * on the turn, the skip is impossible.
+   */
+  disableTools?: boolean;
 }
 
 export interface ChatOutput {
@@ -107,6 +115,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 // ─── OpenAI Agents path ───────────────────────────────────────────────────────
 
 let _openaiAgent: InstanceType<typeof Agent> | null = null;
+let _openaiAgentNoTools: InstanceType<typeof Agent> | null = null;
 let _openaiRunner: InstanceType<typeof Runner> | null = null;
 
 // USE_LOCAL_TOOLS=1 → tools run in-process (no OpenAI→/mcp round-trip per
@@ -144,6 +153,20 @@ function getOpenAIAgent(): InstanceType<typeof Agent> {
     });
   }
   return _openaiAgent;
+}
+
+/** Tool-less twin of getOpenAIAgent — used when the ladder owes a question. */
+function getOpenAIAgentNoTools(): InstanceType<typeof Agent> {
+  if (!_openaiAgentNoTools) {
+    _openaiAgentNoTools = new Agent({
+      name: "PlandaAssistantNoTools",
+      instructions: SYSTEM_PROMPT,
+      model: (process.env.OPENAI_MODEL ?? "gpt-4.1-mini") as string,
+      tools: [],
+      modelSettings: { store: true },
+    });
+  }
+  return _openaiAgentNoTools;
 }
 
 function getOpenAIRunner(): InstanceType<typeof Runner> {
@@ -221,7 +244,7 @@ function debugProbe(result: unknown, extractedCount: number): void {
 async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
   return withTrace("PlandaChat", async () => {
     const runner = getOpenAIRunner();
-    const agent = getOpenAIAgent();
+    const agent = input.disableTools ? getOpenAIAgentNoTools() : getOpenAIAgent();
     const model = (process.env.OPENAI_MODEL ?? "gpt-4.1-mini");
 
     // ── First pass ────────────────────────────────────────────────────────────
@@ -242,6 +265,7 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
     // Max 1 retry to bound latency.
     const shouldRetry =
       input.forceToolCall === true &&
+      input.disableTools !== true && // a tool-less turn cannot "miss" a tool
       firstToolCalls.length === 0 &&
       !isClarifyingQuestion(firstText);
 
