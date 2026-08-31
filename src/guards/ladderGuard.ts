@@ -334,9 +334,14 @@ function owedRung(opts: {
   // conversations into the topicless route. Topic is checked on the raw
   // (unnormalized) turns — extractUserTopics/extractUserRequest normalize
   // internally, and the name-pair exemption needs original capitalization.
+  // "Çocuğum için" maps to the ergen topic in extractUserTopics, but it says
+  // WHO the therapy is for, not WHAT it is about — seen live: the ladder
+  // treated the child flow's topic as known and jumped to modality.
+  const topicsOf = (text: string): string[] =>
+    extractUserTopics(text).filter((t) => !(t === "ergen" && childSignal));
   const rawUserText = userTurns.join("\n");
   if (
-    extractUserTopics(rawUserText).length === 0 &&
+    topicsOf(rawUserText).length === 0 &&
     !extractUserRequest(rawUserText).approach &&
     !NAME_PAIR_RE.test(rawUserText)
   ) {
@@ -362,13 +367,23 @@ function owedRung(opts: {
   const saidInPerson = containsAny(conversation, IN_PERSON_PHRASES);
   const gaveLocation = userTurns.some((t) => mentionsLocation(t));
 
+  // The "already asked last turn" loop breakers assume the user dodged the
+  // question. If this turn answered a DIFFERENT rung instead (gave the topic
+  // or the age), nothing was dodged — the rung is still owed. Seen live in
+  // the child flow: modality asked, user supplied the topic, cards shown
+  // with no modality.
+  const answeredOtherRung =
+    topicsOf(userMessage).length > 0 ||
+    AGE_STATED_RE.test(userMessage) ||
+    /^\s*\d{1,2}\s*$/.test(userMessage);
+
   if (saidOnline) {
     return { skipped: false, reason: "modality_online" };
   }
 
   if (saidInPerson) {
     if (gaveLocation) return { skipped: false, reason: "in_person_with_location" };
-    if (lastTurnAsked(history, "city")) {
+    if (!answeredOtherRung && lastTurnAsked(history, "city")) {
       return { skipped: false, reason: "city_already_asked" };
     }
     return { skipped: true, missingRung: "city" };
@@ -379,7 +394,7 @@ function owedRung(opts: {
     // the prompt allows going straight to results.
     return { skipped: false, reason: "location_given" };
   }
-  if (lastTurnAsked(history, "modality")) {
+  if (!answeredOtherRung && lastTurnAsked(history, "modality")) {
     return { skipped: false, reason: "modality_already_asked" };
   }
   return { skipped: true, missingRung: "modality" };

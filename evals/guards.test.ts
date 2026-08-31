@@ -594,3 +594,43 @@ test("nextOwedRung: a name lookup owes no rung at all", () => {
   assert.equal(r.skipped, false);
   assert.equal(r.reason, "name_lookup");
 });
+
+// ─── nextOwedRung — child flow (prod e2e 2026-08-31) ─────────────────────────
+
+const childHistory: ChatMessage[] = [
+  { role: "user", content: "Çocuğum için terapist arıyorum" },
+  { role: "assistant", content: "Tabii, yardımcı olayım. Terapi görecek kişi kaç yaşında?" },
+];
+
+test("nextOwedRung: 'çocuğum için' is who-for, not a topic — topic is owed after the age", () => {
+  const r = nextOwedRung({ userMessage: "9 yaşında", history: childHistory, intent: clarificationIntent });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "topic");
+});
+
+test("nextOwedRung: answering the topic after a modality question is not a dodge", () => {
+  const history: ChatMessage[] = [
+    ...childHistory,
+    { role: "user", content: "9 yaşında" },
+    { role: "assistant", content: "Anladım, 9 yaş için bakıyorum. Online mı yüz yüze mi tercih edersin?" },
+  ];
+  const r = nextOwedRung({ userMessage: "Okulda çok kaygılı, arkadaş edinemiyor", history, intent: clarificationIntent });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "modality");
+});
+
+test("nextOwedRung: a genuine dodge of the modality question still passes", () => {
+  const history: ChatMessage[] = [
+    ...videoHistory,
+    { role: "user", content: "25" },
+    { role: "assistant", content: "Anladım. Online mı yüz yüze mi tercih edersin?" },
+  ];
+  const r = nextOwedRung({ userMessage: "bilmiyorum, fark eder mi?", history, intent: clarificationIntent });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "modality_already_asked");
+});
+
+test("extractUserTopics: 'Bağımlıyım' is the addiction topic", () => {
+  assert.deepEqual(extractUserTopics("Bağımlıyım"), ["bagimlilik"]);
+  assert.ok(extractUserTopics("alkol bağımlılığı var").includes("bagimlilik"));
+});

@@ -84,8 +84,10 @@ Kurallar:
 - Basamakları asla tek mesajda birleştirme; sohbet ritmi tur tur akar.
 - Bir basamağın cevabı gelince merdiven BİTMEZ; sıradaki eksik basamağa
   geç. Özellikle YAŞ cevabı ("25", "34 yaşındayım") arama için yeterli
-  bilgi DEĞİLDİR: görüşme tercihi hâlâ bilinmiyorsa tool çağırmadan önce
-  3. basamağı sor — "Anladım. Online mı yüz yüze mi tercih edersin?".
+  bilgi DEĞİLDİR: tool çağırmadan önce sıradaki EKSİK basamağı sor —
+  konu hâlâ bilinmiyorsa önce konuyu (çocuk akışında yaş önce gelir, konu
+  sonra sorulur), konu biliniyorsa görüşme tercihini: "Anladım. Online mı
+  yüz yüze mi tercih edersin?".
   Konu + yaş ile find_therapists çağırıp "Online / Nişantaşı" gibi bir
   görüşme biçimi yazmak, kullanıcının hiç söylemediği bir tercihi
   uydurmaktır (bkz. ŞEHİR KURALI).

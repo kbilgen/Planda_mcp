@@ -274,6 +274,8 @@ const TOPIC_SPECIALTY_MAP: Record<string, { userWords: string[]; specialtySubstr
   // "yas" alone would false-match "yaşıyorum". Force explicit grief context.
   yas:       { userWords: ["yasta", "matem", "kayip", "vefat", "olum", "olen"],                   specialtySubstr: ["kayip", "yas"] },
   ergen:     { userWords: ["ergen", "cocuk", "cocugum"],                                          specialtySubstr: ["ergen", "cocuk", "akran"] },
+  // "bagimli" (>= 5 chars, prefix) covers "bağımlıyım" / "bağımlılık".
+  bagimlilik:{ userWords: ["bagimli", "alkol", "madde", "kumar", "sigara"],                       specialtySubstr: ["bagimlilik"] },
   iletisim:  { userWords: ["iletisim", "iletisemiyorum", "anlasamiyorum"],                        specialtySubstr: ["iletisim"] },
   ofke:      { userWords: ["ofke", "ofkeli", "sinirli", "saldirgan"],                             specialtySubstr: ["duygu yonetimi", "ofke"] },
   yeme:      { userWords: ["yeme", "anoreksi", "bulimi", "beden algisi"],                         specialtySubstr: ["yeme", "beden algisi"] },
