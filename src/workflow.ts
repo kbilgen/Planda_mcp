@@ -72,6 +72,12 @@ export interface ChatInput {
    * step, not just the first. We instead verify post-hoc and retry.
    */
   forceToolCall?: boolean;
+  /**
+   * Per-turn "[Sistem notu: …]" appended to the user message the model sees
+   * (never persisted to history). Set by the ladder pre-steer when the
+   * conversation still owes the user a question before any search.
+   */
+  steeringNote?: string;
 }
 
 export interface ChatOutput {
@@ -175,14 +181,19 @@ function isClarifyingQuestion(text: string): boolean {
   return clarifiers.some((p) => lower.includes(p));
 }
 
-function buildAgentInput(history: ChatMessage[], userMessage: string): AgentInputItem[] {
+function buildAgentInput(
+  history: ChatMessage[],
+  userMessage: string,
+  steeringNote?: string
+): AgentInputItem[] {
+  const userText = steeringNote ? `${userMessage}\n\n${steeringNote}` : userMessage;
   return [
     ...history.map((m): AgentInputItem =>
       m.role === "user"
         ? { role: "user", content: m.content }
         : { role: "assistant", status: "completed", content: [{ type: "output_text", text: m.content }] } as AgentInputItem
     ),
-    { role: "user", content: [{ type: "input_text", text: userMessage }] },
+    { role: "user", content: [{ type: "input_text", text: userText }] },
   ];
 }
 
@@ -214,7 +225,7 @@ async function runOpenAIChat(input: ChatInput): Promise<ChatOutput> {
     const model = (process.env.OPENAI_MODEL ?? "gpt-4.1-mini");
 
     // ── First pass ────────────────────────────────────────────────────────────
-    const firstItems = buildAgentInput(input.history, input.message);
+    const firstItems = buildAgentInput(input.history, input.message, input.steeringNote);
     const firstResult = await runner.run(agent, firstItems, { maxTurns: MAX_TURNS });
     const firstText = String(firstResult.finalOutput ?? "");
     const firstToolCalls = extractToolCalls(firstResult);

@@ -181,8 +181,10 @@ function buildClaudeTools(log: ToolCallLog[]) {
 
 function buildMessages(
   history: ChatMessage[],
-  userMessage: string
+  userMessage: string,
+  steeringNote?: string
 ): Anthropic.Beta.BetaMessageParam[] {
+  const userText = steeringNote ? `${userMessage}\n\n${steeringNote}` : userMessage;
   return [
     ...history.map(
       (m): Anthropic.Beta.BetaMessageParam => ({
@@ -190,7 +192,7 @@ function buildMessages(
         content: m.content,
       })
     ),
-    { role: "user", content: userMessage },
+    { role: "user", content: userText },
   ];
 }
 
@@ -250,7 +252,7 @@ async function runOnce(
 
 export async function runClaudeChat(input: ChatInput): Promise<ChatOutput> {
   const toolCalls: ToolCallLog[] = [];
-  const firstMessages = buildMessages(input.history, input.message);
+  const firstMessages = buildMessages(input.history, input.message, input.steeringNote);
 
   let final = await runOnce(firstMessages, toolCalls);
   let text = extractText(final);

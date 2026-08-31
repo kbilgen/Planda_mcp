@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { extractUserTopics, buildFlowUserText } from "../src/guards/hallucinationGuard.js";
-import { detectLadderSkip } from "../src/guards/ladderGuard.js";
+import { detectLadderSkip, nextOwedRung, LADDER_STEERING_NOTES } from "../src/guards/ladderGuard.js";
 import { mentionsLocation } from "../src/services/locationNormalizer.js";
 import type { ChatMessage } from "../src/sessionStore.js";
 import type { IntentResult } from "../src/guards/intentClassifier.js";
@@ -470,7 +470,8 @@ test("detectLadderSkip: name lookup needs no topic", () => {
     intent: searchIntent,
   });
   assert.equal(r.skipped, false);
-  assert.equal(r.reason, "modality_online");
+  // Name lookups exit before the modality rungs — they owe no question.
+  assert.equal(r.reason, "name_lookup");
 });
 
 // ─── detectLadderSkip — age rung (child/teen flows) ─────────────────────────
@@ -525,4 +526,71 @@ test("detectLadderSkip: age dodge falls through instead of trapping", () => {
   });
   assert.equal(r.skipped, false);
   assert.equal(r.reason, "modality_online");
+});
+
+// ─── nextOwedRung (pre-steer) ────────────────────────────────────────────────
+// The iOS transcript of 2026-08-31: topic asked, age asked, user answers
+// "25". Prompt-only fixes left the model searching 4 times out of 5; the
+// pre-steer hands it the modality note before it runs.
+
+const videoHistory: ChatMessage[] = [
+  { role: "user", content: "İlk kez terapi alacağım, nereden başlamalıyım?" },
+  { role: "assistant", content: "Anladım, ilk adımda neye ihtiyacın olduğunu netleştirebiliriz. Seni en çok zorlayan şey ne?" },
+  { role: "user", content: "Bağımlıyım" },
+  { role: "assistant", content: "Anlıyorum, bu gerçekten zorlayıcı olabilir. Kaç yaşındasın?" },
+];
+const clarificationIntent: IntentResult = { intent: "clarification", expectedTools: [], matched: ["continuation_of_question"] };
+
+test("nextOwedRung: age answered, modality never asked → modality is owed", () => {
+  const r = nextOwedRung({ userMessage: "25", history: videoHistory, intent: clarificationIntent });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "modality");
+  assert.match(LADDER_STEERING_NOTES.modality, /online mı yüz yüze mi/);
+});
+
+test("nextOwedRung: modality answered online → nothing owed", () => {
+  const history: ChatMessage[] = [
+    ...videoHistory,
+    { role: "user", content: "25" },
+    { role: "assistant", content: "Anladım. Online mı yüz yüze mi tercih edersin?" },
+  ];
+  const r = nextOwedRung({ userMessage: "Online olsun", history, intent: clarificationIntent });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "modality_online");
+});
+
+test("nextOwedRung: in-person answered, no city → city is owed", () => {
+  const history: ChatMessage[] = [
+    ...videoHistory,
+    { role: "user", content: "25" },
+    { role: "assistant", content: "Anladım. Online mı yüz yüze mi tercih edersin?" },
+  ];
+  const r = nextOwedRung({ userMessage: "Yüz yüze", history, intent: clarificationIntent });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "city");
+});
+
+test("nextOwedRung: exempt intents are never steered", () => {
+  const r = nextOwedRung({
+    userMessage: "Ekin Alankuş kim?",
+    history: [],
+    intent: { intent: "therapist_detail", expectedTools: ["find_therapists"], matched: [] },
+  });
+  assert.equal(r.skipped, false);
+});
+
+test("nextOwedRung agrees with detectLadderSkip whenever cards are shown", () => {
+  const owed = nextOwedRung({ userMessage: "25", history: videoHistory, intent: clarificationIntent });
+  const skip = detectLadderSkip({ userMessage: "25", history: videoHistory, intent: clarificationIntent, response: CARDS });
+  assert.equal(skip.missingRung, owed.missingRung);
+});
+
+test("nextOwedRung: a name lookup owes no rung at all", () => {
+  const r = nextOwedRung({
+    userMessage: "Ekin Alankuş kim?",
+    history: [],
+    intent: { intent: "search_therapist", expectedTools: ["find_therapists"], matched: [] },
+  });
+  assert.equal(r.skipped, false);
+  assert.equal(r.reason, "name_lookup");
 });

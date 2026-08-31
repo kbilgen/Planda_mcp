@@ -59,6 +59,8 @@ import {
   LADDER_TOPIC_QUESTION,
   LADDER_MODALITY_QUESTION,
   LADDER_CITY_QUESTION,
+  LADDER_STEERING_NOTES,
+  nextOwedRung,
   type LadderRung,
 } from "./guards/ladderGuard.js";
 import { createCardHold } from "./streamGate.js";
@@ -346,38 +348,28 @@ async function postProcessResponse(text: string, userMessage?: string): Promise<
  * path; validated hard because the model already misbehaved this turn:
  * any cards, missing question mark, or bloat → null → static fallback.
  */
+/**
+ * Pre-steer: when the ladder still owes the user a rung, hand the model the
+ * rung's system note with the user turn so it asks instead of searching.
+ * Same analysis the post-hoc guard uses; the note is never persisted.
+ */
+function ladderSteeringNote(
+  userMessage: string,
+  history: ChatMessage[],
+  intent: IntentResult
+): string | undefined {
+  const owed = nextOwedRung({ userMessage, history, intent });
+  if (!owed.skipped || !owed.missingRung) return undefined;
+  console.log(`[guard] ladder pre-steer: ${owed.missingRung} (history=${history.length} turns)`);
+  return LADDER_STEERING_NOTES[owed.missingRung];
+}
+
 async function naturalLadderQuestion(
   rung: LadderRung,
   userMessage: string,
   history: ChatMessage[]
 ): Promise<string | null> {
-  const notes: Record<LadderRung, string> = {
-    age:
-      "[Sistem notu: Terapi görecek kişinin yaşı henüz belli değil ve yaş " +
-      "eleme için kritik. Terapist önerme, kart gösterme, tool çağırma. " +
-      "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
-      "hissettir, sonra TEK soru olarak yaşı sor — kullanıcı kendisi için " +
-      "arıyorsa doğal biçimde 'Kaç yaşındasın?', başkası içinse 'Terapi " +
-      "görecek kişi kaç yaşında?'.]",
-    topic:
-      "[Sistem notu: Kullanıcının hangi konuda desteğe ihtiyacı olduğu henüz " +
-      "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
-      "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
-      "hissettir, sonra TEK soru olarak onu en çok zorlayan konunun ne " +
-      "olduğunu sor.]",
-    modality:
-      "[Sistem notu: Kullanıcının görüşme tercihi (online mı yüz yüze mi) " +
-      "henüz belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
-      "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
-      "hissettir, sonra TEK soru olarak online mı yüz yüze mi tercih " +
-      "ettiğini sor.]",
-    city:
-      "[Sistem notu: Kullanıcı yüz yüze görüşmek istiyor ama hangi şehirde " +
-      "olduğunu henüz söylemedi. Terapist önerme, kart gösterme, tool çağırma. " +
-      "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
-      "hissettir, sonra TEK soru olarak hangi şehirde olduğunu sor.]",
-  };
-  const note = notes[rung];
+  const note = LADDER_STEERING_NOTES[rung];
   try {
     const result = await runChat({
       message: note,
@@ -1183,7 +1175,10 @@ async function runHttp(): Promise<void> {
     const startedAt = Date.now();
     try {
       let { response: rawResponse, updatedHistory, toolCalls, model } =
-        await runChat({ message, history, forceToolCall });
+        await runChat({
+          message, history, forceToolCall,
+          steeringNote: ladderSteeringNote(message, history, intent),
+        });
       const processed = await postProcessResponse(
         rawResponse,
         buildFlowUserText(history, message)
@@ -1317,7 +1312,10 @@ async function runHttp(): Promise<void> {
       const hold = createCardHold();
 
       let { updatedHistory, toolCalls, model } = await runChatStream(
-        { message, history, forceToolCall },
+        {
+          message, history, forceToolCall,
+          steeringNote: ladderSteeringNote(message, history, intent),
+        },
         {
           onStatus: (msg) => sseWrite(res, "status", { message: msg }),
           onDelta: (delta) => {

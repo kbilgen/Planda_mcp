@@ -108,6 +108,43 @@ export interface LadderSkipResult {
   reason?: string;
 }
 
+/**
+ * Per-rung "[Sistem notu: …]" steering. Two consumers:
+ *   • pre-steer (index.ts ladderSteeringNote): appended to the user turn BEFORE
+ *     the model runs when nextOwedRung() says a rung is still owed — an
+ *     in-conversation note the model follows far more reliably than a rule
+ *     buried in a 34k-char system prompt (live: age answered → cards 5/5 with
+ *     prompt-only fixes; the post-hoc guard caught every one).
+ *   • rescue (index.ts naturalLadderQuestion): the same note phrases the
+ *     guard's replacement question when the model skipped anyway.
+ */
+export const LADDER_STEERING_NOTES: Record<LadderRung, string> = {
+  age:
+    "[Sistem notu: Terapi görecek kişinin yaşı henüz belli değil ve yaş " +
+    "eleme için kritik. Terapist önerme, kart gösterme, tool çağırma. " +
+    "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
+    "hissettir, sonra TEK soru olarak yaşı sor — kullanıcı kendisi için " +
+    "arıyorsa doğal biçimde 'Kaç yaşındasın?', başkası içinse 'Terapi " +
+    "görecek kişi kaç yaşında?'.]",
+  topic:
+    "[Sistem notu: Kullanıcının hangi konuda desteğe ihtiyacı olduğu henüz " +
+    "belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
+    "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
+    "hissettir, sonra TEK soru olarak onu en çok zorlayan konunun ne " +
+    "olduğunu sor.]",
+  modality:
+    "[Sistem notu: Kullanıcının görüşme tercihi (online mı yüz yüze mi) " +
+    "henüz belli değil. Terapist önerme, kart gösterme, tool çağırma. " +
+    "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
+    "hissettir, sonra TEK soru olarak online mı yüz yüze mi tercih " +
+    "ettiğini sor.]",
+  city:
+    "[Sistem notu: Kullanıcı yüz yüze görüşmek istiyor ama hangi şehirde " +
+    "olduğunu henüz söylemedi. Terapist önerme, kart gösterme, tool çağırma. " +
+    "Kullanıcının son mesajını kısaca ve sıcak bir dille kabul ettiğini " +
+    "hissettir, sonra TEK soru olarak hangi şehirde olduğunu sor.]",
+};
+
 function hasExpertCards(response: string): boolean {
   return /\[\[expert:[^\]]+\]\]/.test(response);
 }
@@ -230,6 +267,30 @@ export function detectLadderSkip(opts: {
   const { userMessage, history, response, intent } = opts;
 
   if (!hasExpertCards(response)) return { skipped: false, reason: "no_cards" };
+  return owedRung({ userMessage, history, intent });
+}
+
+/**
+ * The rung the conversation still owes the user, decided BEFORE the model
+ * runs — same analysis as detectLadderSkip minus the cards precondition.
+ * Returns `skipped: true, missingRung` when a rung is owed (the caller
+ * steers the model toward asking it), `skipped: false, reason` otherwise.
+ */
+export function nextOwedRung(opts: {
+  userMessage: string;
+  history: ChatMessage[];
+  intent?: IntentResult;
+}): LadderSkipResult {
+  return owedRung(opts);
+}
+
+function owedRung(opts: {
+  userMessage: string;
+  history: ChatMessage[];
+  intent?: IntentResult;
+}): LadderSkipResult {
+  const { userMessage, history, intent } = opts;
+
   if (intent && EXEMPT_INTENTS.has(intent.intent)) {
     return { skipped: false, reason: `exempt_intent:${intent.intent}` };
   }
@@ -288,6 +349,13 @@ export function detectLadderSkip(opts: {
   // ── Rung 2: age for everyone else (adult flows, after topic) ─────────────
   if (ageOwed) {
     return { skipped: true, missingRung: "age" };
+  }
+
+  // A name lookup ("Ekin Alankuş kim?") is answered directly — no modality
+  // or city is owed. Without this the pre-steer would send the model off to
+  // ask "online mı yüz yüze mi?" instead of saying who the person is.
+  if (isNameLookup) {
+    return { skipped: false, reason: "name_lookup" };
   }
 
   const saidOnline = containsAny(conversation, ONLINE_PHRASES);
