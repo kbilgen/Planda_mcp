@@ -546,3 +546,33 @@ test("diversifyRanking: 0 or 1 items passthrough", () => {
   const one = roster(1);
   assert.deepEqual(diversifyRanking(one, { seed: 1 }).map((t) => t.id), [0]);
 });
+
+// ─── "ilişki" must mean İlişkisel, not any word containing it (prod, 2026-09-01) ─
+// The model asked for specialty_name="ilişki"; substring matching pulled in a
+// child therapist via "Akran İlişkileri" (peer relations). The model then led
+// with her, and the guard — which requires "İlişkisel" — pruned the card.
+
+const cocukTerapisti: Therapist = {
+  id: 5,
+  name: "Ayşenur",
+  surname: "Toker",
+  full_name: "Ayşenur Toker",
+  username: "aysenur-toker",
+  branches: [{ id: 50, type: "physical", name: "Nişantaşı", city: { id: 1, name: "İstanbul" } }],
+  services: [{ id: 65, name: "Çocuk Danışmanlığı", fee: "6000.00" }],
+  specialties: [
+    { id: 17, name: "Çocuk Gelişimi" },
+    { id: 48, name: "Akran İlişkileri " },
+  ],
+};
+
+test("filterBySpecialtyName: 'ilişki' matches İlişkisel, not 'Akran İlişkileri'", () => {
+  const result = filterBySpecialtyName([...LIST, cocukTerapisti], "ilişki");
+  assert.ok(result.some((t) => t.id === 1), "Ayşe (İlişkisel Problemler) must match");
+  assert.ok(!result.some((t) => t.id === 5), "child therapist with only Akran İlişkileri must not match");
+});
+
+test("filterBySpecialtyName: 'akran' still reaches the child therapist", () => {
+  const result = filterBySpecialtyName([...LIST, cocukTerapisti], "akran");
+  assert.deepEqual(result.map((t) => t.id), [5]);
+});

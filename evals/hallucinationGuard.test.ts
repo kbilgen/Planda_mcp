@@ -13,6 +13,7 @@ import {
   extractUserRequest,
   extractMismatchedUsernames,
   pruneMismatchedCards,
+  scrubPrunedProse,
   buildMatchBlock,
   buildSpecialtyLine,
   buildLocationLine,
@@ -461,4 +462,108 @@ test("stripPermissionTail keeps mid-sentence 'istersen' untouched", () => {
   const out = stripPermissionTail(input);
   // "İstersen" at start without "ister misin" tail is preserved
   assert.match(out, /İstersen/);
+});
+
+// ─── Prose repair after pruning (prod, 2026-09-01) ───────────────────────────
+// pruneMismatchedCards dropped Ayşenur's card but the intro still said
+// "3 ismi seçiyorum" and "İlk önerim Ayşenur Coşkun Toker; …" above two cards
+// for other people. The prose that names a pruned therapist has to go, the
+// count has to match the surviving cards, and the "ilk önerim" sentence must
+// point at a therapist the user can actually see.
+
+const aysenur: Therapist = {
+  id: 389,
+  name: "Ayşenur",
+  surname: "Coşkun Toker",
+  full_name: "Ayşenur Coşkun Toker",
+  username: "aysenur_coskun_toker",
+  branches: [{ id: 24, type: "physical", name: "Nişantaşı", city: { id: 40, name: "İstanbul" } }],
+  services: [],
+  specialties: [{ id: 48, name: "Akran İlişkileri " }],
+};
+const zeynep: Therapist = {
+  id: 7,
+  name: "Zeynep",
+  surname: "Kurt",
+  full_name: "Zeynep Kurt",
+  username: "zeynep_kurt",
+  branches: [
+    { id: 24, type: "physical", name: "Nişantaşı", city: { id: 40, name: "İstanbul" } },
+    { id: 27, type: "online", name: "Online" },
+  ],
+  services: [],
+  specialties: [{ id: 23, name: "İlişkisel Problemler" }, { id: 18, name: "Depresyon" }],
+};
+const somay: Therapist = {
+  id: 8,
+  name: "Somay",
+  surname: "Şentürk",
+  full_name: "Somay Şentürk",
+  username: "somay_senturk",
+  branches: [{ id: 24, type: "physical", name: "Nişantaşı", city: { id: 40, name: "İstanbul" } }],
+  services: [],
+  specialties: [{ id: 23, name: "İlişkisel Problemler" }],
+};
+
+const PRUNED_INTRO =
+  "İlişki alanında çalışan ve İstanbul'da yüz yüze görüşen seçeneklere baktım; " +
+  "sana en uygun görünenlerden 3 ismi seçiyorum:\n\n" +
+  "İlk önerim Ayşenur Coşkun Toker; ilişki ve iletişim alanlarında çalışıyor ve " +
+  "Nişantaşı'nda yüz yüze görüşüyor.\n\n" +
+  "**Zeynep Kurt** — Uzman Psikolog\nUzmanlık: İlişkisel Problemler\n[[expert:zeynep_kurt]]\n\n" +
+  "**Somay Şentürk** — Uzman Psikolog\nUzmanlık: İlişkisel Problemler\n[[expert:somay_senturk]]\n";
+
+test("scrubPrunedProse drops the sentence naming the pruned therapist", () => {
+  const out = scrubPrunedProse(PRUNED_INTRO, {
+    pruned: [aysenur], kept: [zeynep, somay], removedCount: 1, keptCount: 2,
+    req: extractUserRequest("ilişki sorunu yaşıyorum\nyüz yüze\nistanbul"),
+  });
+  assert.ok(!out.includes("Ayşenur"), "pruned name must not survive in prose");
+  assert.ok(out.includes("[[expert:zeynep_kurt]]") && out.includes("[[expert:somay_senturk]]"));
+});
+
+test("scrubPrunedProse fixes the announced count to the surviving cards", () => {
+  const out = scrubPrunedProse(PRUNED_INTRO, {
+    pruned: [aysenur], kept: [zeynep, somay], removedCount: 1, keptCount: 2,
+    req: extractUserRequest("ilişki"),
+  });
+  assert.ok(out.includes("2 ismi seçiyorum"), out);
+  assert.ok(!out.includes("3 ismi"));
+});
+
+test("scrubPrunedProse re-points 'ilk önerim' at the first surviving card", () => {
+  const out = scrubPrunedProse(PRUNED_INTRO, {
+    pruned: [aysenur], kept: [zeynep, somay], removedCount: 1, keptCount: 2,
+    req: extractUserRequest("ilişki"),
+  });
+  const introEnd = out.indexOf("**Zeynep Kurt**");
+  const intro = out.slice(0, introEnd);
+  assert.match(intro, /İlk önerim Zeynep Kurt/);
+  assert.ok(intro.includes("İlişkisel Problemler"), "reason comes from specialties[], not the model");
+});
+
+test("scrubPrunedProse leaves a count that was never about the cards alone", () => {
+  const text =
+    "Kaygı alanında çalışan 12 terapiste baktım; şu 3 ismi öneriyorum:\n\n" +
+    "İlk önerim Zeynep Kurt.\n\n" +
+    "**Zeynep Kurt** — Uzman Psikolog\n[[expert:zeynep_kurt]]\n";
+  const out = scrubPrunedProse(text, {
+    pruned: [aysenur, somay], kept: [zeynep], removedCount: 2, keptCount: 1,
+    req: extractUserRequest("kaygı"),
+  });
+  assert.ok(out.includes("12 terapiste baktım"), "search-size count must stay");
+  assert.ok(out.includes("1 ismi öneriyorum"));
+  assert.equal((out.match(/İlk önerim/g) ?? []).length, 1, "existing ilk önerim for a kept card stays, no duplicate");
+});
+
+test("scrubPrunedProse keeps a sentence about a kept therapist who shares a first name", () => {
+  const ayseNur: Therapist = { ...zeynep, id: 9, name: "Ayşenur", surname: "Çelik", full_name: "Ayşenur Çelik", username: "aysenur_celik" };
+  const text =
+    "İlk önerim Ayşenur Çelik; ilişki alanında çalışıyor.\n\n" +
+    "**Ayşenur Çelik** — Uzman Psikolog\n[[expert:aysenur_celik]]\n";
+  const out = scrubPrunedProse(text, {
+    pruned: [aysenur], kept: [ayseNur], removedCount: 1, keptCount: 1,
+    req: extractUserRequest("ilişki"),
+  });
+  assert.ok(out.includes("İlk önerim Ayşenur Çelik"));
 });

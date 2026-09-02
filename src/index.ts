@@ -48,7 +48,7 @@ import {
   EXPLANATION_FALLBACK,
   detectMetaHallucination,
   extractMismatchedUsernames,
-  pruneMismatchedCards,
+  pruneMismatchedResponse,
   injectStructuredMatchBlocks,
   stripPermissionTail,
   buildFlowUserText,
@@ -490,7 +490,9 @@ async function guardResponse(
         const mismatchedSet = extractMismatchedUsernames(
           specMismatch.map((v) => ({ kind: v.kind, value: v.value }))
         );
-        const pruned = pruneMismatchedCards(rawResponse, mismatchedSet);
+        // Card surgery plus prose repair: the intro must not keep naming a
+        // pruned therapist or announcing the pre-prune card count.
+        const pruned = await pruneMismatchedResponse(rawResponse, mismatchedSet, flowText);
         console.warn(
           `[guard] specialty_mismatch × ${specMismatch.length}: ` +
           `pruned=${pruned.removedCount} kept=${pruned.keptCount}`

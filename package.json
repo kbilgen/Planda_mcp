@@ -13,7 +13,7 @@
     "eval": "tsx evals/run.ts",
     "eval:judge": "tsx evals/run.ts --judge",
     "eval:upload": "tsx evals/upload.ts",
-    "test:unit": "node --import tsx --test evals/classifier.test.ts evals/filters.test.ts evals/location.test.ts evals/guards.test.ts evals/feeResolver.test.ts evals/streamGate.test.ts"
+    "test:unit": "node --import tsx --test evals/classifier.test.ts evals/filters.test.ts evals/location.test.ts evals/guards.test.ts evals/feeResolver.test.ts evals/streamGate.test.ts evals/hallucinationGuard.test.ts"
   },
   "engines": {
     "node": ">=20"

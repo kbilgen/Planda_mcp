@@ -487,6 +487,173 @@ export function pruneMismatchedCards(
   return { response: result, removedCount: removed, keptCount: kept };
 }
 
+// ─── Prose repair after pruning ──────────────────────────────────────────────
+//
+// pruneMismatchedCards only touches card blocks. The intro the prompt demands
+// above them ("… 3 ismi seçiyorum:", "İlk önerim Ayşenur …") is model prose
+// and kept naming the pruned therapist — prod, 2026-09-01: the user saw
+// "İlk önerim Ayşenur Coşkun Toker" over two cards for other people, and
+// "3 ismi" over two cards. This pass makes the prose agree with the cards:
+//   1. every sentence naming a pruned therapist is dropped,
+//   2. a card-count phrase that counted the original cards is rewritten to
+//      the surviving count (the "12 terapiste baktım" search-size count is
+//      left alone — it never equalled the card count),
+//   3. if no "ilk önerim" sentence survives, one is rebuilt for the first
+//      surviving card from specialties[] / branches[] — never from the model.
+
+export interface ScrubPrunedProseInput {
+  pruned: Therapist[];
+  kept: Therapist[];
+  removedCount: number;
+  keptCount: number;
+  req: UserRequest;
+}
+
+const CARD_BLOCK_PAT = /\*\*[^*\n]+\*\*\s*—[\s\S]*?\[\[expert:[^\]]+\]\]\s*/g;
+
+const COUNT_WORDS: Record<string, number> = { bir: 1, iki: 2, uc: 3, dort: 4, bes: 5 };
+
+/** "3 ismi seçiyorum", "üç terapist öneriyorum" → the number and the phrase. */
+const CARD_COUNT_PAT =
+  /(\d+|bir|iki|üç|uc|dört|dort|beş|bes)(\s+(?:ismi|isim|isimi|terapist\w*|uzman\w*|psikolog\w*|kişi\w*|kisi\w*|öneri\w*|oneri\w*|seçenek\w*|secenek\w*)[^.!?\n;:\d]{0,60}?\s(?:öner|oner|seç|sec|sun|paylaş|paylas|göster|goster|getir|listel|buldum|seçtim|sectim))/giu;
+
+function therapistFirstName(t: Therapist): string {
+  const first = t.name?.trim() || (t.full_name ?? "").trim().split(/\s+/)[0] || "";
+  return normTR(first);
+}
+
+function therapistFullName(t: Therapist): string {
+  return t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" ");
+}
+
+function sentenceNamesTherapist(
+  normSentence: string,
+  t: Therapist,
+  keptFirstNames: Set<string>
+): boolean {
+  const full = normTR(therapistFullName(t));
+  if (full && normSentence.includes(full)) return true;
+  const first = therapistFirstName(t);
+  if (first.length < 3 || keptFirstNames.has(first)) return false;
+  return normSentence.split(" ").includes(first);
+}
+
+/** The data-derived replacement for a dropped "İlk önerim …" sentence. */
+function buildFirstPickSentence(t: Therapist, req: UserRequest): string {
+  const name = therapistFullName(t);
+  const reasons: string[] = [];
+  const matched = matchedSpecialtyNames(t, req.topics);
+  if (matched.length > 0) reasons.push(`${matched.slice(0, 2).join(" ve ")} alanında çalışıyor`);
+  const physical = (t.branches ?? []).filter((b) => b?.type === "physical");
+  const hasOnline = (t.branches ?? []).some((b) => b?.type === "online");
+  if (req.prefersOnline === false || req.city) {
+    const branch = req.city
+      ? physical.find((b) => b.city?.name && normTR(b.city.name) === normTR(req.city ?? ""))
+      : physical[0];
+    if (branch?.name) reasons.push(`${branch.name} şubesinde yüz yüze görüşüyor`);
+    else if (hasOnline) reasons.push("online görüşüyor");
+  } else if (hasOnline) {
+    reasons.push("online görüşüyor");
+  }
+  return reasons.length > 0
+    ? `İlk önerim ${name}; ${reasons.join(" ve ")}.`
+    : `İlk önerim ${name}.`;
+}
+
+export function scrubPrunedProse(text: string, input: ScrubPrunedProseInput): string {
+  const { pruned, kept, removedCount, keptCount, req } = input;
+  if (pruned.length === 0 || keptCount === 0) return text;
+
+  const keptFirstNames = new Set(kept.map(therapistFirstName));
+  const originalCount = removedCount + keptCount;
+  let firstPickSurvives = false;
+
+  const scrubProse = (prose: string): string => {
+    // 1. Drop sentences naming a pruned therapist. Sentences end at . ! ?
+    //    or a line break, so a "**Name**" header is never inside one.
+    let out = prose.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
+      const norm = normTR(sentence);
+      if (pruned.some((t) => sentenceNamesTherapist(norm, t, keptFirstNames))) return "";
+      // normTR: /i flag doesn't fold Turkish İ, and \b ignores ö.
+      if (norm.includes("ilk oner")) firstPickSurvives = true;
+      return sentence;
+    });
+    // 2. Rewrite the card count — only a number that counted the original
+    //    cards, so the search-size count ("12 terapiste baktım") stays.
+    out = out.replace(CARD_COUNT_PAT, (m, num: string, rest: string) => {
+      const n = /^\d+$/.test(num) ? parseInt(num, 10) : COUNT_WORDS[normTR(num)];
+      return n === originalCount ? `${keptCount}${rest}` : m;
+    });
+    // Collapse the whitespace the dropped sentences left behind.
+    return out
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/^[ \t]+/gm, "")
+      .replace(/\n{3,}/g, "\n\n");
+  };
+
+  // Walk prose segments between cards; cards pass through untouched.
+  const cards = [...text.matchAll(CARD_BLOCK_PAT)];
+  let result = "";
+  let cursor = 0;
+  for (const card of cards) {
+    result += scrubProse(text.slice(cursor, card.index));
+    result += card[0];
+    cursor = card.index + card[0].length;
+  }
+  result += scrubProse(text.slice(cursor));
+
+  // 3. Rebuild the first-pick sentence above the first surviving card.
+  if (!firstPickSurvives && cards.length > 0) {
+    const firstCard = result.match(CARD_BLOCK_PAT)?.[0];
+    const firstSlug = firstCard?.match(/\[\[expert:([^\]]+)\]\]/)?.[1];
+    // Only the therapist of the first card may be called the first pick —
+    // an unresolvable slug means no sentence, never a guess.
+    const first = kept.find((t) => t.username === firstSlug);
+    const idx = firstCard ? result.indexOf(firstCard) : -1;
+    if (first && idx >= 0) {
+      const intro = result.slice(0, idx).trimEnd();
+      const sentence = buildFirstPickSentence(first, req);
+      result = (intro ? `${intro}\n\n` : "") + `${sentence}\n\n` + result.slice(idx);
+    }
+  }
+  return result;
+}
+
+/**
+ * Prune off-topic cards AND repair the prose around them. This is what the
+ * response guard calls; pruneMismatchedCards stays exported for callers that
+ * only need the card surgery.
+ */
+export async function pruneMismatchedResponse(
+  text: string,
+  mismatchedUsernames: Set<string>,
+  flowUserText: string
+): Promise<{ response: string; removedCount: number; keptCount: number }> {
+  const pruned = pruneMismatchedCards(text, mismatchedUsernames);
+  if (pruned.removedCount === 0 || pruned.keptCount === 0) return pruned;
+
+  const roster = await getRoster();
+  const bySlug = new Map(roster.filter((t) => t.username).map((t) => [t.username as string, t]));
+  const prunedTherapists = [...mismatchedUsernames]
+    .map((slug) => bySlug.get(slug))
+    .filter((t): t is Therapist => Boolean(t));
+  const keptTherapists = [...pruned.response.matchAll(/\[\[expert:([^\]]+)\]\]/g)]
+    .map((m) => bySlug.get(m[1]))
+    .filter((t): t is Therapist => Boolean(t));
+  if (prunedTherapists.length === 0) return pruned;
+
+  return {
+    ...pruned,
+    response: scrubPrunedProse(pruned.response, {
+      pruned: prunedTherapists,
+      kept: keptTherapists,
+      removedCount: pruned.removedCount,
+      keptCount: pruned.keptCount,
+      req: extractUserRequest(flowUserText),
+    }),
+  };
+}
+
 // ─── Structured "Eşleşme" block (Fix D) ──────────────────────────────────────
 //
 // Replaces the LLM-written "Neden uygun: ..." narrative with a data-derived

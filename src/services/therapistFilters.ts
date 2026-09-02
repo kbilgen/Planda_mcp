@@ -168,6 +168,22 @@ const SPECIALTY_SYNONYMS: Record<string, string[]> = {
   dehb: ["dikkat"],
 };
 
+/**
+ * Words whose plain substring is too loose for the catalogue. "ilişki" is
+ * the user's word for relationship trouble, but as a substring it also hits
+ * "Akran İlişkileri" — a child/teen specialty (prod, 2026-09-01: the tool
+ * returned a child therapist for an adult relationship query, the model led
+ * with her, and the response guard — which requires "İlişkisel" — pruned the
+ * card). Keys and values are normTR'd; a matching word is replaced by its
+ * catalogue form instead of being used verbatim.
+ */
+const SPECIALTY_NARROWING: Record<string, string> = {
+  iliski: "iliskisel",
+  iliskiler: "iliskisel",
+  iliskim: "iliskisel",
+  iliskimiz: "iliskisel",
+};
+
 export function filterBySpecialtyName(list: Therapist[], query: string): Therapist[] {
   let norm = normTR(query);
   if (norm.length < 3) return list;
@@ -184,6 +200,9 @@ export function filterBySpecialtyName(list: Therapist[], query: string): Therapi
 
   // Expand with synonyms: the original phrase always stays first; each
   // meaningful word (and the whole phrase) may add catalogue substrings.
+  // Narrowed words are swapped for their catalogue form first, so "ilişki"
+  // enters as "iliskisel" and never matches as a bare substring.
+  norm = meaningful.map((w) => SPECIALTY_NARROWING[w] ?? w).join(" ");
   const targets = new Set<string>([norm]);
   for (const t of SPECIALTY_SYNONYMS[norm] ?? []) targets.add(t);
   for (const w of meaningful) {
