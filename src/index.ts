@@ -49,6 +49,8 @@ import {
   detectMetaHallucination,
   extractMismatchedUsernames,
   pruneMismatchedResponse,
+  repairIntroTopicDrift,
+  hasTherapistCardContent,
   injectStructuredMatchBlocks,
   stripPermissionTail,
   buildFlowUserText,
@@ -522,6 +524,23 @@ async function guardResponse(
       }
     } catch (err) {
       console.error("[guard] verifySpecialtyMatch error:", err);
+    }
+  }
+
+  // Intro topic drift: the cards are grounded but the "how I searched"
+  // sentence names a topic the user never raised (the model copies the
+  // prompt's worked example). Rebuild that one sentence from the user's answers.
+  if (userMessage && hasTherapistCardContent(workingResponse)) {
+    try {
+      const flowText = buildFlowUserText(history, userMessage);
+      const drift = repairIntroTopicDrift(workingResponse, flowText);
+      if (drift.drifted) {
+        violations.push({ kind: "other", detail: `intro_topic_drift:${drift.driftTopic}` });
+        console.warn(`[guard] intro topic drift (${drift.driftTopic}) — search sentence rebuilt`);
+        workingResponse = drift.response;
+      }
+    } catch (err) {
+      console.error("[guard] repairIntroTopicDrift error:", err);
     }
   }
 

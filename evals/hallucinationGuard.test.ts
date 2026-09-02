@@ -14,6 +14,7 @@ import {
   extractMismatchedUsernames,
   pruneMismatchedCards,
   scrubPrunedProse,
+  repairIntroTopicDrift,
   buildMatchBlock,
   buildSpecialtyLine,
   buildLocationLine,
@@ -566,4 +567,62 @@ test("scrubPrunedProse keeps a sentence about a kept therapist who shares a firs
     req: extractUserRequest("ilişki"),
   });
   assert.ok(out.includes("İlk önerim Ayşenur Çelik"));
+});
+
+// ─── Intro topic drift (prod, 2026-09-02) ────────────────────────────────────
+// User: "İlişkimde sorun yaşıyorum" → cards all İlişkisel, but the intro read
+// "Kaygı, iletişim ve ilişkisel problemler üzerinde çalışan terapistlere
+// baktım" / "Kaygı tarafında çalışan…": the model copies the prompt's worked
+// example ("Kaygı alanında çalışan 12 terapiste baktım") with the wrong topic.
+// The search sentence is rebuilt from the user's request; everything else stays.
+
+const DRIFT_CARDS =
+  "**Esin Ergin** — Uzman Psikolog\nUzmanlık: İlişkisel Problemler\n[[expert:esin_ergin]]\n\n" +
+  "**Kübra Akar** — Uzman Psikolog\nUzmanlık: İlişkisel Problemler\n[[expert:kubra_akar]]\n";
+
+test("repairIntroTopicDrift rewrites a search sentence naming a topic the user never raised", () => {
+  const text =
+    "Kaygı, iletişim ve ilişkisel problemler üzerinde çalışan terapistlere baktım; " +
+    "İstanbul’da yüz yüze uygun ve yaş aralığına da uyanlardan şu 3 ismi öneriyorum:\n\n" +
+    "İlk önerim Esin Ergin; ilişkisel problemler ve iletişim alanlarında çalışıyor.\n\n" + DRIFT_CARDS;
+  const r = repairIntroTopicDrift(text, "İlişkimde sorun yaşıyorum, hangi terapi uygun olur?\n45\nyuzyuze istanbul");
+  assert.ok(r.drifted, "kaygı is not the user's topic");
+  assert.ok(!/kaygı/i.test(r.response.split("**Esin")[0]), r.response);
+  assert.ok(r.response.includes("İlişkisel problemler alanında çalışan"), r.response);
+  assert.ok(r.response.includes("İstanbul’da yüz yüze"), "modality and city come from the user's answers");
+  assert.ok(r.response.includes("2 ismi"), "count is the number of cards, not the model's 3");
+  assert.ok(r.response.includes("İlk önerim Esin Ergin; ilişkisel problemler ve iletişim"), "first-pick sentence is grounded and untouched");
+  assert.ok(r.response.endsWith(DRIFT_CARDS), "cards untouched");
+});
+
+test("repairIntroTopicDrift also catches the bare 'Kaygı tarafında' variant", () => {
+  const text = "Kaygı tarafında çalışan ve İstanbul’da yüz yüze görüşen terapistlere baktım; sana en uygun görünen 3 ismi seçiyorum.\n\n" + DRIFT_CARDS;
+  const r = repairIntroTopicDrift(text, "ilişkimde sorun yaşıyorum\nyüz yüze\nistanbul");
+  assert.ok(r.drifted);
+  assert.ok(r.response.startsWith("İlişkisel problemler alanında çalışan ve İstanbul’da yüz yüze görüşen terapistlere baktım; sana en uygun görünen 2 ismi seçiyorum:"), r.response);
+});
+
+test("repairIntroTopicDrift leaves an on-topic intro alone", () => {
+  const text = "İlişkisel problemler alanında çalışan, İstanbul’da yüz yüze görüşebileceğin terapistlere baktım; yaş aralığına da uyanlardan şu 2 ismi öneriyorum:\n\n" + DRIFT_CARDS;
+  const r = repairIntroTopicDrift(text, "ilişkimde sorun yaşıyorum\nistanbul");
+  assert.equal(r.drifted, false);
+  assert.equal(r.response, text);
+});
+
+test("repairIntroTopicDrift accepts a second topic the user actually raised", () => {
+  const text = "Kaygı ve ilişkisel problemler alanında çalışan terapistlere baktım; şu 2 ismi öneriyorum:\n\n" + DRIFT_CARDS;
+  const r = repairIntroTopicDrift(text, "ilişkimde sorun var, sürekli kaygılıyım\nonline");
+  assert.equal(r.drifted, false);
+});
+
+test("repairIntroTopicDrift does nothing without a user topic or without cards", () => {
+  const text = "Kaygı alanında çalışan terapistlere baktım; şu 2 ismi öneriyorum:\n\n" + DRIFT_CARDS;
+  assert.equal(repairIntroTopicDrift(text, "terapist arıyorum").drifted, false);
+  assert.equal(repairIntroTopicDrift("Kaygı alanında çalışanlara baktım.", "ilişki sorunu").drifted, false);
+});
+
+test("repairIntroTopicDrift ignores a grounded first-pick sentence that names another specialty", () => {
+  const text = "İlişkisel problemler alanında çalışanlara baktım; şu 2 ismi öneriyorum:\n\nİlk önerim Esin Ergin; iletişim ve kaygı alanlarında da çalışıyor.\n\n" + DRIFT_CARDS;
+  const r = repairIntroTopicDrift(text, "ilişkimde sorun yaşıyorum");
+  assert.equal(r.drifted, false);
 });

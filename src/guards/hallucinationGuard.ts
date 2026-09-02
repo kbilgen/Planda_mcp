@@ -654,6 +654,98 @@ export async function pruneMismatchedResponse(
   };
 }
 
+// ─── Intro topic drift ───────────────────────────────────────────────────────
+//
+// The prompt asks for a "how I searched" sentence above the cards. The model
+// (gpt-4.1-mini) copies the prompt's worked example — "Kaygı alanında çalışan
+// 12 terapiste baktım…" — and keeps its topic: prod, 2026-09-02, user said
+// "İlişkimde sorun yaşıyorum", every card was İlişkisel, and the intro read
+// "Kaygı tarafında çalışan … terapistlere baktım". The cards are grounded;
+// only that one sentence lies about the search. When it names a topic the
+// user never raised, it is rebuilt from the user's own answers (topic,
+// modality, city) and the number of cards actually shown. The first-pick
+// sentence and the cards are never touched.
+
+/** Display label per topic key, for the rebuilt search sentence. */
+const TOPIC_DISPLAY: Record<string, string> = {
+  iliski: "İlişkisel problemler",
+  kaygi: "Kaygı",
+  depresyon: "Depresyon",
+  travma: "Travma",
+  yas: "Kayıp ve yas",
+  ergen: "Çocuk ve ergen",
+  bagimlilik: "Bağımlılık",
+  iletisim: "İletişim problemleri",
+  ofke: "Duygu yönetimi",
+  yeme: "Yeme problemleri ve beden algısı",
+};
+
+/** Locative suffix — vowel harmony and consonant hardening for known cities. */
+function cityLocative(city: string): string {
+  const table: Record<string, string> = {
+    istanbul: "İstanbul’da", ankara: "Ankara’da", izmir: "İzmir’de", bursa: "Bursa’da",
+    antalya: "Antalya’da", adana: "Adana’da", konya: "Konya’da", gaziantep: "Gaziantep’te",
+    kayseri: "Kayseri’de", eskisehir: "Eskişehir’de", samsun: "Samsun’da", mersin: "Mersin’de",
+    kocaeli: "Kocaeli’nde",
+  };
+  return table[normTR(city)] ?? `${city}’da`;
+}
+
+/** The search sentence is the one that says what was looked at — not the first pick. */
+const SEARCH_VERB_PAT = /\b(bakt|arad|incel|tarad|listele|sect|seciyorum|oneriyorum|one cikar|buldum)/;
+
+function sentenceHasTopicDrift(normSentence: string, userTopics: string[]): string | null {
+  for (const [key, rule] of Object.entries(TOPIC_SPECIALTY_MAP)) {
+    if (userTopics.includes(key)) continue;
+    // userWords only: specialtySubstr has short tokens like "yas" that
+    // whole-word-match "yaş aralığına" — the grief false-match class.
+    if (hasWordOrPrefix(normSentence, rule.userWords)) return key;
+  }
+  return null;
+}
+
+export function buildSearchSentence(req: UserRequest, cardCount: number): string {
+  const topics = req.topics.map((k) => TOPIC_DISPLAY[k]).filter(Boolean);
+  const topicPart = topics.length > 0 ? `${topics.join(" ve ")} alanında çalışan` : "Sana uygun";
+  let modality = "";
+  if (req.city) {
+    modality = req.prefersOnline === true
+      ? ` ve ${cityLocative(req.city)} online görüşen`
+      : ` ve ${cityLocative(req.city)} yüz yüze görüşen`;
+  } else if (req.prefersOnline === true) {
+    modality = " ve online görüşen";
+  } else if (req.prefersOnline === false) {
+    modality = " ve yüz yüze görüşen";
+  }
+  return `${topicPart}${modality} terapistlere baktım; sana en uygun görünen ${cardCount} ismi seçiyorum:`;
+}
+
+export function repairIntroTopicDrift(
+  text: string,
+  flowUserText: string
+): { response: string; drifted: boolean; driftTopic?: string } {
+  const req = extractUserRequest(flowUserText);
+  if (req.topics.length === 0) return { response: text, drifted: false };
+  const cards = [...text.matchAll(CARD_BLOCK_PAT)];
+  if (cards.length === 0) return { response: text, drifted: false };
+  const introEnd = cards[0].index ?? 0;
+  const intro = text.slice(0, introEnd);
+
+  let driftTopic: string | undefined;
+  const repaired = intro.replace(/[^.!?:\n]+[.!?:]*/g, (sentence) => {
+    if (driftTopic) return sentence;
+    const norm = normTR(sentence);
+    if (norm.includes("ilk oner")) return sentence;       // first pick is grounded
+    if (!SEARCH_VERB_PAT.test(norm)) return sentence;      // not the search sentence
+    const drift = sentenceHasTopicDrift(norm, req.topics);
+    if (!drift) return sentence;
+    driftTopic = drift;
+    return buildSearchSentence(req, cards.length);
+  });
+  if (!driftTopic) return { response: text, drifted: false };
+  return { response: repaired + text.slice(introEnd), drifted: true, driftTopic };
+}
+
 // ─── Structured "Eşleşme" block (Fix D) ──────────────────────────────────────
 //
 // Replaces the LLM-written "Neden uygun: ..." narrative with a data-derived
