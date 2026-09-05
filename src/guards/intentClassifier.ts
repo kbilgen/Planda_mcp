@@ -138,6 +138,39 @@ function hasAny(haystack: string, keys: string[]): string[] {
   return keys.filter((k) => haystack.includes(k));
 }
 
+/**
+ * Presence / lowercase name-lookup: "gülşah gürel burada mı", "sizde ayşe
+ * demir var mı", "ahmet yılmaz kim?", "Alev yıldırım kimdir ne yapar".
+ * Requires a cue AND at least one residual (non-stopword) token that can
+ * plausibly be a name — a bare "burada mı?" without a name is not one.
+ * Returns the cue and the residual words, or null.
+ */
+export function detectPresenceLookup(
+  message: string
+): { cue: string; nameWords: string[] } | null {
+  const n = NORMALIZE(message.trim());
+  const nClean = n.replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const cleanWords = nClean.split(" ").filter(Boolean);
+  const cue =
+    PRESENCE_PHRASES.find((p) => nClean.includes(p)) ??
+    (nClean.includes("var mi") &&
+    PRESENCE_CONTEXT_WORDS.some((w) => cleanWords.includes(w))
+      ? "var mi (contextual)"
+      : null) ??
+    PRESENCE_WORD_CUES.find((c) => cleanWords.includes(c)) ??
+    null;
+  if (!cue) return null;
+  const nameWords = cleanWords.filter(
+    (w) => w.length >= 2 && !PRESENCE_STOPWORDS.has(w)
+  );
+  return nameWords.length >= 1 ? { cue, nameWords } : null;
+}
+
+/** Shared with the ladder guard: a presence question owes no ladder rung. */
+export function isPresenceLookup(message: string): boolean {
+  return detectPresenceLookup(message) !== null;
+}
+
 /** Lightweight message shape for the history parameter — matches ChatMessage. */
 export interface ClassifierHistoryItem {
   role: "user" | "assistant";
@@ -175,7 +208,19 @@ export function classifyIntent(
   // can't ground a full search from one fragment (NODE-3).
   //
   // Runs AFTER explanation_request because meta-questions take priority
-  // regardless of whether the previous turn was a question.
+  // regardless of whether the previous turn was a question — and AFTER the
+  // presence check below, because "Alev yıldırım burada çalışıyor mu" is a
+  // name lookup even when the assistant just asked a ladder question (prod
+  // web chat, 2026-09-05: filed as clarification, tool never forced).
+  const presence = detectPresenceLookup(message);
+  if (presence) {
+    return {
+      intent: "search_therapist",
+      expectedTools: ["find_therapists"],
+      matched: [presence.cue, ...presence.nameWords.slice(0, 4)],
+    };
+  }
+
   if (history && history.length > 0) {
     for (let i = history.length - 1; i >= 0; i--) {
       const prev = history[i];
@@ -230,33 +275,6 @@ export function classifyIntent(
       expectedTools: ["list_specialties"],
       matched: specialtyMatches,
     };
-  }
-
-  // Presence / lowercase name-lookup: "gülşah gürel burada mı", "sizde ayşe
-  // demir var mı", "ahmet yılmaz kim?". Requires a cue AND at least one
-  // residual (non-stopword) token that can plausibly be a name — a bare
-  // "burada mı?" without a name falls through to the other branches.
-  const nClean = n.replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  const cleanWords = nClean.split(" ").filter(Boolean);
-  const presenceCue =
-    PRESENCE_PHRASES.find((p) => nClean.includes(p)) ??
-    (nClean.includes("var mi") &&
-    PRESENCE_CONTEXT_WORDS.some((w) => cleanWords.includes(w))
-      ? "var mi (contextual)"
-      : null) ??
-    PRESENCE_WORD_CUES.find((c) => cleanWords.includes(c)) ??
-    null;
-  if (presenceCue) {
-    const nameWords = cleanWords.filter(
-      (w) => w.length >= 2 && !PRESENCE_STOPWORDS.has(w)
-    );
-    if (nameWords.length >= 1) {
-      return {
-        intent: "search_therapist",
-        expectedTools: ["find_therapists"],
-        matched: [presenceCue, ...nameWords.slice(0, 4)],
-      };
-    }
   }
 
   // Search vs. detail: if both search+detail keywords present, it's a filtered

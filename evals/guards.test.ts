@@ -634,3 +634,56 @@ test("extractUserTopics: 'Bağımlıyım' is the addiction topic", () => {
   assert.deepEqual(extractUserTopics("Bağımlıyım"), ["bagimlilik"]);
   assert.ok(extractUserTopics("alkol bağımlılığı var").includes("bagimlilik"));
 });
+
+// ─── Lowercase name lookups (prod web chat, 2026-09-05) ─────────────────────
+// "Alev yıldırım kimdir ne yapar" → the ladder asked "seni en çok zorlayan
+// şey ne?", then "Alev yıldırım burada çalışıyor mu" → "Kaç yaşındasın?".
+// The name-pair exemption needed two capitalized words; mobile typing gives
+// one. A presence cue with a name-like residual, or a roster name in the
+// text, is a name lookup too — it owes no rung.
+
+test("nextOwedRung: lowercase-surname presence question owes no rung", () => {
+  const r = nextOwedRung({
+    userMessage: "Alev yıldırım kimdir ne yapar",
+    history: [],
+    intent: searchIntent,
+  });
+  assert.equal(r.skipped, false, `owed ${r.missingRung}`);
+  assert.equal(r.reason, "name_lookup");
+});
+
+test("nextOwedRung: 'burada çalışıyor mu' after a ladder question is still a name lookup", () => {
+  const history: ChatMessage[] = [
+    { role: "user", content: "Alev yıldırım kimdir ne yapar" },
+    { role: "assistant", content: "Anladım. Seni en çok zorlayan şey ne?" },
+  ];
+  const r = nextOwedRung({
+    userMessage: "Alev yıldırım burada çalışıyor mu",
+    history,
+    intent: { intent: "clarification", expectedTools: [], matched: ["continuation_of_question"] },
+  });
+  assert.equal(r.skipped, false, `owed ${r.missingRung}`);
+  assert.equal(r.reason, "name_lookup");
+});
+
+test("nextOwedRung: an all-lowercase roster name with no cue is a name lookup", () => {
+  const r = nextOwedRung({
+    userMessage: "alev yıldırım",
+    history: [],
+    intent: { intent: "unknown", expectedTools: [], matched: [] },
+    rosterNames: ["Alev Yıldırım", "Ekin Alankuş"],
+  });
+  assert.equal(r.skipped, false, `owed ${r.missingRung}`);
+  assert.equal(r.reason, "name_lookup");
+});
+
+test("nextOwedRung: a topicless search still owes the topic when no name is involved", () => {
+  const r = nextOwedRung({
+    userMessage: "terapist arıyorum",
+    history: [],
+    intent: searchIntent,
+    rosterNames: ["Alev Yıldırım"],
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "topic");
+});

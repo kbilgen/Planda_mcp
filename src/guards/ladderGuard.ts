@@ -30,7 +30,13 @@
 import type { ChatMessage } from "../sessionStore.js";
 import type { IntentResult } from "./intentClassifier.js";
 import { mentionsLocation } from "../services/locationNormalizer.js";
-import { extractUserTopics, extractUserRequest } from "./hallucinationGuard.js";
+import {
+  extractUserTopics,
+  extractUserRequest,
+  mentionsTherapistName,
+  getCachedRosterNames,
+} from "./hallucinationGuard.js";
+import { isPresenceLookup } from "./intentClassifier.js";
 
 /**
  * Static fallback questions, one per rung. The caller first tries to have
@@ -280,6 +286,8 @@ export function nextOwedRung(opts: {
   userMessage: string;
   history: ChatMessage[];
   intent?: IntentResult;
+  /** Roster full names — defaults to the hallucination guard's cache. */
+  rosterNames?: string[];
 }): LadderSkipResult {
   return owedRung(opts);
 }
@@ -288,8 +296,10 @@ function owedRung(opts: {
   userMessage: string;
   history: ChatMessage[];
   intent?: IntentResult;
+  rosterNames?: string[];
 }): LadderSkipResult {
   const { userMessage, history, intent } = opts;
+  const rosterNames = opts.rosterNames ?? getCachedRosterNames();
 
   if (intent && EXEMPT_INTENTS.has(intent.intent)) {
     return { skipped: false, reason: `exempt_intent:${intent.intent}` };
@@ -314,8 +324,15 @@ function owedRung(opts: {
   // age elimination never ran. Child signal puts the rung before topic
   // (prompt: "çocuk/ergen sinyalinde YAŞ en öne geçer"); adult flows get it
   // after topic. Name lookups are exempt; a dodge falls through.
+  // Three ways a name lookup shows up: two capitalized words ("Ekin Alankuş
+  // kim?"), a presence cue with a name-like residual ("alev yıldırım burada
+  // çalışıyor mu" — mobile typing rarely capitalizes surnames; prod web
+  // chat, 2026-09-05), or a roster name anywhere in the text ("alev yıldırım").
   const rawUserTextForAge = userTurns.join("\n");
-  const isNameLookup = NAME_PAIR_RE.test(rawUserTextForAge);
+  const isNameLookup =
+    NAME_PAIR_RE.test(rawUserTextForAge) ||
+    userTurns.some((t) => isPresenceLookup(t)) ||
+    mentionsTherapistName(rawUserTextForAge, rosterNames);
   const ageStated =
     AGE_STATED_RE.test(rawUserTextForAge) ||
     (ageEverAsked(history) && userTurns.some((t) => /\b\d{1,2}\b/.test(t)));
@@ -343,7 +360,7 @@ function owedRung(opts: {
   if (
     topicsOf(rawUserText).length === 0 &&
     !extractUserRequest(rawUserText).approach &&
-    !NAME_PAIR_RE.test(rawUserText)
+    !isNameLookup
   ) {
     if (!topicEverAsked(history)) {
       return { skipped: true, missingRung: "topic" };

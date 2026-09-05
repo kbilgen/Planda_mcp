@@ -15,6 +15,7 @@ import {
   pruneMismatchedCards,
   scrubPrunedProse,
   repairIntroTopicDrift,
+  mentionsTherapistName,
   buildMatchBlock,
   buildSpecialtyLine,
   buildLocationLine,
@@ -625,4 +626,17 @@ test("repairIntroTopicDrift ignores a grounded first-pick sentence that names an
   const text = "İlişkisel problemler alanında çalışanlara baktım; şu 2 ismi öneriyorum:\n\nİlk önerim Esin Ergin; iletişim ve kaygı alanlarında da çalışıyor.\n\n" + DRIFT_CARDS;
   const r = repairIntroTopicDrift(text, "ilişkimde sorun yaşıyorum");
   assert.equal(r.drifted, false);
+});
+
+// ─── mentionsTherapistName — roster-backed name detection for the ladder ────
+
+test("mentionsTherapistName: lowercase, diacritic-free text still hits the roster name", () => {
+  const names = ["Alev Yıldırım", "Ayşe Nur Çelik"];
+  assert.equal(mentionsTherapistName("alev yildirim kimdir", names), true);
+  assert.equal(mentionsTherapistName("Ayşe nur çelik burada mı", names), true);
+  assert.equal(mentionsTherapistName("ilişkimde sorun yaşıyorum", names), false);
+});
+
+test("mentionsTherapistName: a single-word name never matches on its own", () => {
+  assert.equal(mentionsTherapistName("alev gibi yanıyorum", ["Alev"]), false);
 });

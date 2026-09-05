@@ -50,6 +50,7 @@ import {
   extractMismatchedUsernames,
   pruneMismatchedResponse,
   repairIntroTopicDrift,
+  warmRoster,
   hasTherapistCardContent,
   injectStructuredMatchBlocks,
   stripPermissionTail,
@@ -1596,6 +1597,9 @@ async function runHttp(): Promise<void> {
   // ── Listen ───────────────────────────────────────────────────────────────────
   const port = parseInt(process.env.PORT ?? "3000", 10);
   app.listen(port, "0.0.0.0", () => {
+    // The ladder's name detection reads the roster cache synchronously —
+    // fill it before the first turn instead of after the first card check.
+    warmRoster().catch(() => {});
     console.log(`[planda] HTTP server listening on 0.0.0.0:${port}`);
     console.log(`[planda] Chat endpoint : POST /v1/assistant/chat`);
     console.log(`[planda] MCP endpoint  : POST /mcp`);

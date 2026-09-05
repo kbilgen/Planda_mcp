@@ -9,6 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isPresenceLookup,
   classifyIntent,
   detectIntentToolMismatch,
 } from "../src/guards/intentClassifier.js";
@@ -441,4 +442,25 @@ test("only most recent assistant turn considered (older questions ignored)", () 
   ];
   const r = classifyIntent("İlişki için anksiyete için psikolog lazım", history);
   assert.equal(r.intent, "search_therapist");
+});
+
+// A presence question is never an answer to the ladder's question — prod web
+// chat, 2026-09-05: "Alev yıldırım burada çalışıyor mu" right after "Seni en
+// çok zorlayan şey ne?" was filed as clarification, so the tool was not
+// forced and the model asked the age instead of looking the name up.
+test("presence lookup beats the continuation check", () => {
+  const history = [
+    { role: "user" as const, content: "Alev yıldırım kimdir ne yapar" },
+    { role: "assistant" as const, content: "Anladım. Seni en çok zorlayan şey ne?" },
+  ];
+  const r = classifyIntent("Alev yıldırım burada çalışıyor mu", history);
+  assert.equal(r.intent, "search_therapist");
+  assert.deepEqual(r.expectedTools, ["find_therapists"]);
+});
+
+test("isPresenceLookup: cue + name-like residual", () => {
+  assert.equal(isPresenceLookup("Alev yıldırım kimdir ne yapar"), true);
+  assert.equal(isPresenceLookup("gülşah gürel burada mı"), true);
+  assert.equal(isPresenceLookup("burada mı?"), false);
+  assert.equal(isPresenceLookup("ilişkimde sorun yaşıyorum"), false);
 });

@@ -50,6 +50,34 @@ function normTR(s: string): string {
     .trim();
 }
 
+/**
+ * Does the text contain one of these therapist names? Both sides are
+ * normTR'd, so "alev yildirim kimdir" hits "Alev Yıldırım". Single-word
+ * names never match — "alev" is also an ordinary word.
+ */
+export function mentionsTherapistName(text: string, names: string[]): boolean {
+  const n = ` ${normTR(text)} `;
+  if (n.trim().length === 0) return false;
+  for (const name of names) {
+    const full = normTR(name);
+    if (!full.includes(" ")) continue;
+    if (n.includes(` ${full} `)) return true;
+  }
+  return false;
+}
+
+/** Full names of the cached roster — empty until the first fetch lands. */
+export function getCachedRosterNames(): string[] {
+  return (roster?.therapists ?? [])
+    .map((t) => t.full_name?.trim() || [t.name, t.surname].filter(Boolean).join(" "))
+    .filter(Boolean);
+}
+
+/** Fill the roster cache ahead of the first turn (ladder name detection is sync). */
+export function warmRoster(): Promise<unknown> {
+  return getRoster();
+}
+
 function fuzzyMatchesAnyTherapist(query: string, therapists: Therapist[]): boolean {
   const normQuery = normTR(query);
   const words = normQuery.split(" ").filter((w) => w.length >= 2);
