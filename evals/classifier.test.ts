@@ -464,3 +464,32 @@ test("isPresenceLookup: cue + name-like residual", () => {
   assert.equal(isPresenceLookup("burada mı?"), false);
   assert.equal(isPresenceLookup("ilişkimde sorun yaşıyorum"), false);
 });
+
+// "kim" is also an ordinary word. Prod probe after the lowercase fix
+// (2026-09-05): "hangi terapist kim bilmiyorum, kaygım var" was read as a
+// name lookup, so the ladder owed nothing and cards shipped with no age or
+// modality asked. The residual after the cue must look like a name: at
+// least two words that are neither grammar/common words nor verb forms, or
+// one word that is a roster name.
+test("isPresenceLookup: 'kim' inside ordinary sentences is not a name lookup", () => {
+  assert.equal(isPresenceLookup("hangi terapist kim bilmiyorum, kaygım var"), false);
+  assert.equal(isPresenceLookup("kim olduğumu bilmiyorum, kendimi kaybettim"), false);
+  assert.equal(isPresenceLookup("bana kim yardım edebilir"), false);
+  assert.equal(isPresenceLookup("terapist kim olacak"), false);
+});
+
+test("isPresenceLookup: two name-like words after the cue still count", () => {
+  assert.equal(isPresenceLookup("mehmet demir burada mı çalışıyor"), true);
+  assert.equal(isPresenceLookup("sizde ayşe demir var mı"), true);
+});
+
+test("isPresenceLookup: a single word counts only when it is a roster name", () => {
+  assert.equal(isPresenceLookup("alev burada mı çalışıyor", ["Alev Yıldırım"]), true);
+  assert.equal(isPresenceLookup("alev burada mı çalışıyor", []), false);
+});
+
+test("classifyIntent: 'hangi terapist kim bilmiyorum, kaygım var' is a normal search", () => {
+  const r = classifyIntent("hangi terapist kim bilmiyorum, kaygım var");
+  assert.equal(r.intent, "search_therapist");
+  assert.ok(!r.matched.includes("kim"), r.matched.join(","));
+});

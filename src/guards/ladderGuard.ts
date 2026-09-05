@@ -331,7 +331,7 @@ function owedRung(opts: {
   const rawUserTextForAge = userTurns.join("\n");
   const isNameLookup =
     NAME_PAIR_RE.test(rawUserTextForAge) ||
-    userTurns.some((t) => isPresenceLookup(t)) ||
+    userTurns.some((t) => isPresenceLookup(t, rosterNames)) ||
     mentionsTherapistName(rawUserTextForAge, rosterNames);
   const ageStated =
     AGE_STATED_RE.test(rawUserTextForAge) ||

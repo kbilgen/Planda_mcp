@@ -6,6 +6,7 @@
  */
 
 import { DISTRICT_TO_CITY } from "../services/locationNormalizer.js";
+import { getCachedRosterNames } from "./hallucinationGuard.js";
 
 const NORMALIZE = (s: string): string =>
   s.toLowerCase()
@@ -138,15 +139,53 @@ function hasAny(haystack: string, keys: string[]): string[] {
   return keys.filter((k) => haystack.includes(k));
 }
 
+// Residual words after a presence cue must look like a name. "kim" is also
+// an ordinary word (prod probe, 2026-09-05: "hangi terapist kim bilmiyorum,
+// kaygım var" read as a name lookup → ladder owed nothing → cards with no
+// age asked). Grammar/common words are dropped, and so are verb forms by
+// suffix; what remains must be two words, or one word that is a roster name.
+const PRESENCE_COMMON_WORDS = new Set([
+  "bana", "beni", "benim", "bize", "bizi", "kendimi", "kendime", "kendim",
+  "icin", "ile", "ve", "ya", "da", "de", "ne", "nasil", "hangi", "neden",
+  "daha", "cok", "sey", "seyler", "biraz", "en", "iyi", "uygun", "dogru",
+  "yardim", "yardimci", "destek", "olur", "olacak", "olan", "olmak", "oldugumu",
+  "oldugunu", "olabilir", "var", "yok", "lazim", "gerek", "gerekiyor", "simdi",
+  "hemen", "acaba", "ama", "ki", "ile", "insan", "kisi", "ben", "sen", "siz",
+  "bunu", "sunu", "onu", "bu", "su", "o", "gibi", "kadar", "sonra", "once",
+  "yapar", "yapiyor", "eder", "ediyor", "veriyor", "verir",
+]);
+const VERB_SUFFIXES = [
+  "yorum", "yoruz", "yorsun", "yor", "bilir", "bilirim", "bilirsin", "ebilir",
+  "abilir", "meli", "mali", "meliyim", "maliyim", "ecek", "acak", "sem", "sam",
+  "miyim", "muyum", "misin", "musun", "dim", "dum", "tim", "tum", "dik", "duk",
+];
+
+function looksLikeNameWord(w: string): boolean {
+  if (w.length < 3 || PRESENCE_COMMON_WORDS.has(w)) return false;
+  return !VERB_SUFFIXES.some((suf) => w.length > suf.length + 2 && w.endsWith(suf));
+}
+
+/** First/last-name tokens of the roster (normalized), for the one-word case. */
+function rosterNameTokens(rosterNames: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const name of rosterNames) {
+    for (const tok of NORMALIZE(name).replace(/[^a-z0-9 ]/g, " ").split(/\s+/)) {
+      if (tok.length >= 4) out.add(tok);
+    }
+  }
+  return out;
+}
+
 /**
  * Presence / lowercase name-lookup: "gülşah gürel burada mı", "sizde ayşe
  * demir var mı", "ahmet yılmaz kim?", "Alev yıldırım kimdir ne yapar".
- * Requires a cue AND at least one residual (non-stopword) token that can
- * plausibly be a name — a bare "burada mı?" without a name is not one.
+ * Requires a cue AND a name-like residual (see PRESENCE_COMMON_WORDS) — a
+ * bare "burada mı?" or "bana kim yardım edebilir" is not one.
  * Returns the cue and the residual words, or null.
  */
 export function detectPresenceLookup(
-  message: string
+  message: string,
+  rosterNames: string[] = getCachedRosterNames()
 ): { cue: string; nameWords: string[] } | null {
   const n = NORMALIZE(message.trim());
   const nClean = n.replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
@@ -161,14 +200,17 @@ export function detectPresenceLookup(
     null;
   if (!cue) return null;
   const nameWords = cleanWords.filter(
-    (w) => w.length >= 2 && !PRESENCE_STOPWORDS.has(w)
+    (w) => !PRESENCE_STOPWORDS.has(w) && looksLikeNameWord(w)
   );
-  return nameWords.length >= 1 ? { cue, nameWords } : null;
+  if (nameWords.length === 0) return null;
+  if (nameWords.length >= 2) return { cue, nameWords };
+  const tokens = rosterNameTokens(rosterNames);
+  return tokens.has(nameWords[0]) ? { cue, nameWords } : null;
 }
 
 /** Shared with the ladder guard: a presence question owes no ladder rung. */
-export function isPresenceLookup(message: string): boolean {
-  return detectPresenceLookup(message) !== null;
+export function isPresenceLookup(message: string, rosterNames?: string[]): boolean {
+  return detectPresenceLookup(message, rosterNames) !== null;
 }
 
 /** Lightweight message shape for the history parameter — matches ChatMessage. */

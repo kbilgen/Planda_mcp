@@ -687,3 +687,25 @@ test("nextOwedRung: a topicless search still owes the topic when no name is invo
   assert.equal(r.skipped, true);
   assert.equal(r.missingRung, "topic");
 });
+
+test("nextOwedRung: 'kim' in a topic sentence does not exempt the ladder", () => {
+  const r = nextOwedRung({
+    userMessage: "hangi terapist kim bilmiyorum, kaygım var",
+    history: [],
+    intent: searchIntent,
+    rosterNames: ["Alev Yıldırım"],
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "age");
+});
+
+test("nextOwedRung: 'kim olduğumu bilmiyorum' still owes the topic", () => {
+  const r = nextOwedRung({
+    userMessage: "kim olduğumu bilmiyorum, kendimi kaybettim",
+    history: [],
+    intent: { intent: "unknown", expectedTools: [], matched: [] },
+    rosterNames: ["Alev Yıldırım"],
+  });
+  assert.equal(r.skipped, true);
+  assert.equal(r.missingRung, "topic");
+});
